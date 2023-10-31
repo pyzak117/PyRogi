@@ -1,0 +1,5 @@
+# Rogi
+
+# Requirements
+  - pip:
+    - geopandas
