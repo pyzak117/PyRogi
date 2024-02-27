@@ -4,4 +4,4 @@ print(f'''-------------
 rogi {version}
 -------------''')
 
-from rogi import rogi_functions
+from rogi import rock_glacier
