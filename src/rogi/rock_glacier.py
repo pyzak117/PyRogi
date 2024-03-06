@@ -1,8 +1,12 @@
+import contextily as cx
+from matplotlib import pyplot as plt
+import shapely
 import pandas as pd
 import geopandas as gpd
 import os
 from pathlib import Path
 import numpy as np
+from telenvi import raster_tools as rt
 
 class RockGlacierUnit:
 
@@ -90,7 +94,7 @@ class RockGlacierUnit:
         rgu_colorcode       = '',
         rgu_oue_geom        = '',
         rgu_our_geom        = '',
-
+        rgu_epsg            = 2056,
         ):
 
         # RGIK Conceptual Model Attributes
@@ -131,6 +135,9 @@ class RockGlacierUnit:
         self.rgu_pm_geom = rgu_pm_geom
         self.rgu_oue_geom = rgu_oue_geom
         self.rgu_our_geom = rgu_our_geom
+        self.rgu_major_axis_color = 'orange'
+        self.rgu_minor_axis_color = 'red'
+        self.rgu_epsg = rgu_epsg
 
     def write_rgik_pm(self):
         """
@@ -178,6 +185,7 @@ class RockGlacierUnit:
                 ou_row['RelIndex']   = self.rgik_oue_RelIndex
                 ou_row['Comment']    = self.rgik_oue_Comment
                 ou_row['geometry']   = self.rgu_oue_geom
+
             case 'r':
                 ou_row['Out.Type']   = 'Restricted'
                 ou_row['RelFr']      = self.rgik_our_relFr
@@ -211,6 +219,181 @@ class RockGlacierUnit:
             self.rgik_our_RelIndex   = outline_feature['RelIndex']
             self.rgik_our_Comment    = outline_feature['Comment']
             self.rgu_our_geom        = outline_feature['geometry']
+    
+        return None
+
+    def search_outline(self, outlines_layer):
+        
+        # Track the outlines containing the marker feature
+        outlines_containers = outlines_layer[outlines_layer.contains(self.rgu_pm_geom)]
+
+        # Check if it's not empty
+        if len(outlines_containers) == 0:
+            return False
+
+        else:
+            try:
+                self.read_outline(outlines_containers.iloc[0])
+                self.read_outline(outlines_containers.iloc[1])
+                return True
+            except IndexError:
+                print(f'one of the outlines is missing for {self.rgik_id}')
+                return False
+
+    def get_topo_profiles(self):
+        dem = self.get_dem()
+        major_profile = np.array(dem.inspectGeoLine(self.rgu_major_axis))
+        minor_profile = np.array(dem.inspectGeoLine(self.rgu_minor_axis))
+        return major_profile, minor_profile
+        
+    def get_axis(self):
+
+        # Get the rotated rectangle of the Extended outline
+        row_box = self.rgu_oue_geom.minimum_rotated_rectangle
+
+        # Box coords
+        corners = np.array(row_box.boundary.coords)[:-1]
+        
+        # Split X and Y corners coordinates
+        xa, xb, xc, xd = corners[:,0]
+        ya, yb, yc, yd = corners[:,1]
+        
+        # Middle Points
+        e = shapely.Point([(xa+xb)/2, (ya+yb)/2])
+        f = shapely.Point([(xc+xd)/2, (yc+yd)/2])
+        g = shapely.Point([(xa+xd)/2, (ya+yd)/2])
+        h = shapely.Point([(xb+xc)/2, (yb+yc)/2])
+
+        # Axis
+        self.rgu_major_axis = shapely.LineString([e,f])
+        self.rgu_minor_axis = shapely.LineString([g,h])
+    
+        return self.rgu_major_axis, self.rgu_minor_axis
+
+    def get_dem(self, dem_metamap='', epsg=4326, layername='', nRes=0):
+        """
+        dem_metamap : path to a directory containing dems,
+                      path to a geopackage describing the dems maps,
+                      path to a shapefile describing the dems maps,
+                      a geodataframe describing the dems maps
+
+        epsg : the epsg of the rasters - you have to know it before
+        """
+
+        # If the job is already done
+        try:
+            type(self.rgu_dem) == rt.geoim.Geoim
+            return self.rgu_dem
+        except AttributeError:
+            pass
+        
+        # Here we check the existence of the RGU outlines - at least the extended one
+        assert type(self.rgu_oue_geom) != '', 'the rock glacier outlines are not loaded'
+
+        # First cases
+        if type(dem_metamap) == str:
+    
+            assert dem_metamap != '', 'we need metadata about the dems to open them'
+                
+            # Here we have to open the geopackage with the layername
+            if dem_metamap.endswith('.gpkg'):
+                if layername != '':
+                    dem_metamap = gpd.read_file(dem_metamap, layer=layername)
+                else:
+                    dem_metamap = gpd.read_file(dem_metamap)
+
+            # Here we have to open this shapefile
+            if dem_metamap.endswith('.shp'):
+                dem_metamap = gpd.read_file(dem_metamap)
+
+            # Here we have to build the map of the DEM rasters directory
+            else:
+                dem_metamap = rt.getRastermap(dem_metamap)
+
+        # Here we should have a metamap so we can start to work
+        assert type(dem_metamap) == gpd.GeoDataFrame, 'invalid dem_metamap'
+
+        # Here we find the tracks touching the rock glacier outlines
+        rgu_demtracks = dem_metamap[dem_metamap.intersects(self.rgu_oue_geom)==True]
+
+        # Here we crop each raster on the extent of the outlines
+        if nRes == 0:
+            rgu_dems = [rt.Open(demtrack.filepath, load_pixels=False, geoExtent=self.rgu_oue_geom) for demtrack in rgu_demtracks.iloc]
+        else:
+            rgu_dems = [rt.Open(demtrack.filepath, load_pixels=False, geoExtent=self.rgu_oue_geom, nRes=nRes) for demtrack in rgu_demtracks.iloc]
+
+        # Here we merge the tracks
+        rgu_dems_merged = rt.merge(rgu_dems)
+
+        # Here we load the data
+        rgu_dem = rt.Open(rgu_dems_merged, load_pixels=True)
+
+        # Here we mask it on the rock glaciers outlines
+        # rgu_dem.maskFromVector(self.rgu_oue_geom, epsg=epsg)
+
+        self.rgu_dem = rgu_dem
+        return rgu_dem
+
+    def get_relative_topo_profiles(self, window_size=1):
+        major, minor = self.get_topo_profiles()
+        rel_major = np.array(major) - major.min()
+        kernel = np.ones(window_size) / window_size
+        rel_major_new = np.convolve(rel_major, kernel)
+        rel_minor = np.array(minor) - minor.min()
+        rel_minor_new = np.convolve(rel_minor, kernel)
+        return rel_major_new, rel_minor_new
+
+    def show_map(self, ax='', epsg=self.epsg):
+
+        # Define an empty ax if not provided
+        if ax == '':
+            ax = plt.subplot()
+
+        # Draw outlines
+        gpd.GeoSeries([self.rgu_oue_geom]).boundary.plot(ax=ax, color='blue' , linewidth=1.5)
+        gpd.GeoSeries([self.rgu_our_geom]).boundary.plot(ax=ax, color='green', linewidth=1.5)
+
+        # Draw axes points
+        rel_major, rel_minor = self.get_axis()
+        gpd.GeoSeries([rel_major]).boundary.plot(ax=ax, color=self.rgu_major_axis_color , markersize=10)
+        gpd.GeoSeries([rel_minor]).boundary.plot(ax=ax, color=self.rgu_minor_axis_color,     markersize=10)
+
+        # Draw axes
+        gpd.GeoSeries([rel_major]).plot(ax=ax, color=self.rgu_major_axis_color , linewidth=1.5)
+        gpd.GeoSeries([rel_minor]).plot(ax=ax, color=self.rgu_minor_axis_color,     linewidth=1.5)
+
+        cx.add_basemap(
+            ax=ax, source=cx.providers.Esri.WorldImagery, crs=self.epsg
+        )
+
+        # Deactivate geographic coordinates on the borders of the graph
+        ax.get_xaxis().set_ticks([])
+        ax.get_yaxis().set_ticks([])
+
+        return ax
+
+    def show_profiles(self, mode='', ax='', window_size=1):
+
+        # Define an empty ax if not provided
+        if ax == '':
+            ax = plt.subplot()
+
+        # Draw profile
+        rel_major, rel_minor = self.get_relative_topo_profiles(window_size=window_size)
+        if mode == 'major':
+            ax.plot(rel_major[5:-5], linewidth=1.2, color=self.rgu_major_axis_color)
+            ax.set_ybound((0,150))
+            ax.set_xbound((0,500))
+
+        elif mode == 'minor':
+            ax.plot(rel_minor[5:-5], linewidth=1.2, color=self.rgu_minor_axis_color)
+            ax.set_ybound((0,150))
+            ax.set_xbound((0,500))
+
+        # ax.set_aspect(aspect=5)
+
+    def show_pannel(self):
+        pass
 
 def read_rgik_feature(pm, oux='', oue=''):
 
@@ -230,7 +413,8 @@ def read_rgik_feature(pm, oux='', oue=''):
             rgik_kin_att    = pm['Kin.Att.'],
             rgik_kin_rel    = pm['Rel.Kin.'],
             rgik_kin_period = pm['Kin.Period'],
-            rgu_pm_geom     = pm['geometry'])
+            rgu_pm_geom     = pm['geometry'],
+            rgu_id          = pm['WorkingID'])
 
     for out_ft in [oux, oue]:
         if type(out_ft) != str:
