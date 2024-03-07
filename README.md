@@ -1,4 +1,4 @@
-# Rogi
+# PyRogi
 
 # Requirements
   - pip:
