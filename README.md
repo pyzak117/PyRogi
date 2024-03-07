@@ -3,3 +3,4 @@
 # Requirements
   - pip:
     - geopandas
+    - telenvi
