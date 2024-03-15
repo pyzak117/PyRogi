@@ -1,3 +1,4 @@
+from osgeo import gdal
 import numbers
 from typing import List
 from matplotlib import gridspec
@@ -32,13 +33,17 @@ class RockGlacierUnit:
         self._set_attributes_from_rgik_feature(rgik_feature)
         
         # Rename some of the attributes
-        self.rgu_pm_geom  = self.rgik_pm_geometry
-        self.rgu_oue_geom = None
-        self.rgu_our_geom = None
-        self.rgu_dem      = None
-        self.rgu_slope    = None
-        self.rgu_major_axis_color = 'red'
-        self.rgu_minor_axis_color = 'orange'
+        self.rgu_pm_geom   = self.rgik_pm_geometry
+        self.rgu_oue_geom  = None
+        self.rgu_our_geom  = None
+        self.rgu_oue_color = '#01A7C2'
+        self.rgu_our_color = '#007090'
+        self.rgu_dem       = None
+        self.rgu_slope     = None
+        self.rgu_geo_major = None
+        self.rgu_geo_minor = None
+        self.rgu_major_axis_color = '#006989'
+        self.rgu_minor_axis_color = '#A3BAC3' 
         self.rgu_epsg     = 2056
 
     def _set_attributes_from_rgik_feature(self, rgik_feature):
@@ -75,114 +80,116 @@ class RockGlacierUnit:
             # Add attribute to the RGU instance
             setattr(self, valid_attr_name, value)
 
-    def get_most_representative_geometry(self, buffer_width=500, buffer_height=500):
+    def get_buffer_around_marker(self, buffer_width=500):
+        return self.rgu_pm_geom.buffer(buffer_width).envelope
+
+    def get_most_representative_polygon(self, buffer_width=500):
         """
         Return either extended outline if available or a squared buffer around the primary marker 
         """
-        if self.outlines_is_known():
+        if self.rgu_oue_geom is not None : 
             aoi = self.rgu_oue_geom
         else:
-            aoi = self.rgu_pm_geom.buffer(buffer_width).envelope
+            aoi = self.get_buffer_around_marker(buffer_width)
         return aoi
-
-    def get_raster_on_rgu(
-            self,
-            target_source  : str | gpd.GeoDataFrame, 
-            layername       : str ='', 
-            nRes            : numbers.Real = None,
-            width           : numbers.Real = 500, 
-            height          : numbers.Real = 500,
-            load            : bool = False):
-
-        # Here we draw a geographic area where to crop and merge the dems
-        aoi = self.get_most_representative_geometry(width, height)
-
-        target = rt.OpenFromMultipleTargets(
-            target_source = target_source,
-            layername = layername,
-            area_of_interest = aoi,
-            nRes = nRes,
-            load_pixels=False)
-
-        return target
 
     def load_outlines(self, outlines_layer):
         """
         return Rock Glacier Unit outlines if availables
         """
+
+        # Search the oulines containing the primary marker
         outlines_features = outlines_layer[outlines_layer.contains(self.rgu_pm_geom)]
+
+        # Get the attributes of each outlines into the RGU feature
         [self._set_attributes_from_rgik_feature(outline) for outline in outlines_features.iloc]
+
+        # Rename the geometrics attributes
         self.rgu_oue_geom = self.rgik_oue_geometry
         self.rgu_our_geom = self.rgik_our_geometry
+        del self.rgik_oue_geometry
+        del self.rgik_our_geometry
         return self.rgu_oue_geom, self.rgu_our_geom
 
-    def initialize_dem(self, dem_source  : str | gpd.GeoDataFrame,  layername   : str ='',  nRes        : numbers.Real = None, width       : numbers.Real = 500,  height      : numbers.Real = 500) -> rt.geoim.Geoim:
-        self.rgu_dem = self.get_raster_on_rgu(dem_source, layername, nRes, width, height)
+    def read_raster_on_rgu(self, target_source  : str | gpd.GeoDataFrame,  layername       : str ='',  nRes            : numbers.Real = None, buffer_width    : numbers.Real = 500, load_pixels     : bool = False) -> rt.geoim.Geoim:
+        """
+        Open any raster or set of rasters on the extent of the rock glacier
+        Caution : the epsg have to be the same for the raster and for the rgu
+        """
+        aoi = self.get_most_representative_polygon(buffer_width)
+        print(f"load pixels : {load_pixels}")
+        target = rt.OpenFromMultipleTargets(target_source = target_source, layername = layername, area_of_interest = aoi, nRes = nRes, load_pixels=load_pixels)
+        return target
+
+    def initialize_dem(self, dem_source  : str | gpd.GeoDataFrame,  layername   : str ='',  nRes        : numbers.Real = None, width       : numbers.Real = 500) -> gdal.Dataset:
+        self.rgu_dem = self.read_raster_on_rgu(dem_source, layername, nRes, width, load_pixels=False)
         return self.rgu_dem
 
-    def load_dem(self):
-        assert self.dem_is_known(), 'dem not loaded'
-        self.rgu_dem = rt.Open(self.rgu_dem, load_pixels=True)
+    def get_dem(self):
+
+        # Make sure the DEM is initialized on the RGU
+        assert self.rgu_dem is not None, 'dem not initialized'
+
+        # If it's already loaded we just return it
+        if type(self.rgu_dem) == rt.geoim.Geoim:
+            return self.rgu_dem
+
+        # Else we load it
+        else:
+            self.rgu_dem = rt.Open(self.rgu_dem, load_pixels=True)
         return self.rgu_dem
 
-    def load_slope(self):
-        assert self.dem_is_known(), 'dem not loaded'
-        self.rgu_slope = rt.getSlope(self.rgu_dem)
+    def get_slope(self):
+        """
+        Return a slope raster with degrees values. The DEM have to be initialized on the RGU feature.
+        """
+        if self.rgu_slope is not None:
+            return self.rgu_slope
+        else:
+            self.rgu_slope = rt.getSlope(self.get_dem())
         return self.rgu_slope
 
-    def load_geo_axes(self):
-        assert self.outlines_is_known(), 'outlines unknown'
-        self.rgu_major_axis, self.rgu_minor_axis = vt.getMainAxes(self.rgu_oue_geom)
-        return self.rgu_major_axis, self.rgu_minor_axis
+    def get_geo_segments(self):
+        assert self.rgu_oue_geom is not None, 'outlines unknown'
+        if self.rgu_geo_major is not None and self.rgu_geo_minor is not None:
+            return self.rgu_geo_major, self.rgu_geo_minor
+        else:  self.rgu_geo_major, self.rgu_geo_minor = vt.getMainAxes(self.rgu_oue_geom)        
+        return self.rgu_geo_major, self.rgu_geo_minor
 
-    def load_minor_topo_profile(self, window_size=5):
+    def get_raster_values_on_geo_segments(self, target, window_size=1):
+        """
+        Extract the pixels values of the raster along the 2 geoaxes of the RGU feature
+        """
 
-        # Build a convolutionnal kernel
-        kernel = np.ones(window_size) / window_size
-        self.load_geo_axes()
-        assert self.dem_is_known(), 'dem not loaded'
-        self.minor_topo_profile = np.convolve(np.array(self.rgu_dem.inspectGeoLine(self.rgu_minor_axis)), kernel)
+        # Get geo axes
+        geo_major, geo_minor = self.get_geo_segments()
+        
+        # Extract values on the raster
+        major_profile = np.array(target.inspectGeoLine(geo_major))
+        minor_profile = np.array(target.inspectGeoLine(geo_minor))
 
-        return self.minor_topo_profile
+        # Apply a convolutionnal filter if required
+        conv_kernel = np.ones(window_size) / window_size
+        major_profile = np.convolve(major_profile, conv_kernel)
+        minor_profile = np.convolve(minor_profile, conv_kernel)
 
-    def load_major_topo_profile(self, window_size=5):
+        return major_profile, minor_profile
 
-        # Build a convolutionnal kernel
-        kernel = np.ones(window_size) / window_size
-        self.load_geo_axes()
-        assert self.dem_is_known(), 'dem not loaded'
-        self.major_topo_profile = np.convolve(np.array(self.rgu_dem.inspectGeoLine(self.rgu_major_axis)), kernel)
+    def get_topo_profiles(self, window_size=1):
+        """
+        Extract topographic profiles along the 2 geoaxes of the RGU feature
+        """
+        dem = self.get_dem()
+        topo_major_profile, topo_minor_profile = self.get_raster_values_on_geo_segments(dem, window_size)
+        return topo_major_profile, topo_minor_profile
 
-        return self.major_topo_profile
-
-    def load_minor_slope_profile(self, window_size=5):
-
-        # Build a convolutionnal kernel
-        kernel = np.ones(window_size) / window_size
-        assert self.slope_is_known(), 'slope not loaded'
-        self.load_geo_axes()
-        self.minor_slope_profile = np.convolve(np.array(self.rgu_slope.inspectGeoLine(self.rgu_minor_axis)), kernel)
-
-        return self.minor_slope_profile
-
-    def load_major_slope_profile(self, window_size=5):
-
-        # Build a convolutionnal kernel
-        kernel = np.ones(window_size) / window_size
-        assert self.slope_is_known(), 'slope not loaded'
-        self.load_geo_axes()
-        self.major_slope_profile = np.convolve(np.array(self.rgu_slope.inspectGeoLine(self.rgu_major_axis)), kernel)
-
-        return self.major_slope_profile
-
-    def slope_is_known(self):
-        return self.rgu_slope is not None
-
-    def outlines_is_known(self):
-        return self.rgu_oue_geom is not None
-
-    def dem_is_known(self):
-        return self.rgu_dem is not None
+    def get_slope_profiles(self, window_size=1):
+        """
+        Extract topographic profiles along the 2 geoaxes of the RGU feature
+        """
+        slope = self.get_slope()
+        slope_major_profile, slope_minor_profile = self.get_raster_values_on_geo_segments(slope, window_size)
+        return slope_major_profile, slope_minor_profile
     
     def show_map(self, ax='', basemap=False):
 
@@ -191,17 +198,17 @@ class RockGlacierUnit:
             ax = plt.subplot()
 
         # Draw outlines
-        gpd.GeoSeries([self.rgu_oue_geom]).boundary.plot(ax=ax, color='blue' , linewidth=1.5)
-        gpd.GeoSeries([self.rgu_our_geom]).boundary.plot(ax=ax, color='green', linewidth=1.5)
+        gpd.GeoSeries([self.rgu_oue_geom]).boundary.plot(ax=ax, color=self.rgu_oue_color, linewidth=1.5)
+        gpd.GeoSeries([self.rgu_our_geom]).boundary.plot(ax=ax, color=self.rgu_our_color, linewidth=1.5)
 
         # Draw axes vertexes
-        major, minor = self.load_geo_axes()
+        major, minor = self.get_geo_segments()
         gpd.GeoSeries([major]).boundary.plot(ax=ax, color=self.rgu_major_axis_color , markersize=10)
         gpd.GeoSeries([minor]).boundary.plot(ax=ax, color=self.rgu_minor_axis_color,  markersize=10)
 
         # Draw axes
         gpd.GeoSeries([major]).plot(ax=ax, color=self.rgu_major_axis_color , linewidth=1.5)
-        gpd.GeoSeries([minor]).plot(ax=ax, color=self.rgu_minor_axis_color,     linewidth=1.5)
+        gpd.GeoSeries([minor]).plot(ax=ax, color=self.rgu_minor_axis_color,  linewidth=1.5)
 
         # Add background with satellite view
         if basemap :
@@ -212,45 +219,58 @@ class RockGlacierUnit:
         ax.get_yaxis().set_ticks([])
 
         return ax
-    
-    def show_topo_profiles(self, mode='', ax='', window_size=1):
 
-        # Define an empty ax if not provided
+    def show_topo_profile(self, mode='', ax='', window_size=1, linewidth=0.1):
+
         if ax == '':
             ax = plt.subplot()
 
-        # Draw profile
-        rel_major = self.load_major_topo_profile()
-        rel_minor = self.load_minor_topo_profile()
+        # Extract the color to give to the line from the instances settings
+        color = {'major':self.rgu_major_axis_color, 'minor':self.rgu_minor_axis_color}[mode]
 
-        if mode == 'major':
-            ax.plot(rel_major[5:-5], linewidth=1.2, color=self.rgu_major_axis_color)
+        # Get topo values in degrees along the axis
+        topo_values = self.get_topo_profiles()
+        topo_profiles = {'major':topo_values[0], 'minor':topo_values[1]}
+        raw_profile = topo_profiles[mode.lower()]
 
-        elif mode == 'minor':
-            ax.plot(rel_minor[5:-5], linewidth=1.2, color=self.rgu_minor_axis_color)
+        # Draw a first line
+        ax.plot(raw_profile, linewidth=linewidth, color=color)
 
-        return ax
+        # Draw a larger line in the background after applying a convolutionnal filtering on the values
+        if window_size != 1:
+            conv_topo_values = self.get_topo_profiles(window_size=window_size)
+            conv_topo_profiles = {'major':conv_topo_values[0], 'minor':conv_topo_values[1]}
+            conv_profile = conv_topo_profiles[mode.lower()]
+            ax.plot(conv_profile[window_size:-window_size], linewidth=linewidth*15, color=color, alpha=0.5)
+            ax.plot(conv_profile[window_size:-window_size], linewidth=linewidth*2, color='white', alpha=1)
 
-    def show_slope_profiles(self, mode='', ax='', window_size=1):
+    def show_slope_profile(self, mode='', ax='', window_size=1, linewidth=0.1):
 
-        # Define an empty ax if not provided
         if ax == '':
             ax = plt.subplot()
 
-        # Draw profile
-        rel_major = self.load_major_slope_profile()
-        rel_minor = self.load_minor_slope_profile()
+        # Extract the color to give to the line from the instances settings
+        color = {'major':self.rgu_major_axis_color, 'minor':self.rgu_minor_axis_color}[mode]
 
-        if mode == 'major':
-            ax.plot(rel_major[5:-5], linewidth=1.2, color=self.rgu_major_axis_color)
+        # Get slope values in degrees along the axis
+        slope_values = self.get_slope_profiles()
+        slope_profiles = {'major':slope_values[0], 'minor':slope_values[1]}
+        raw_profile = slope_profiles[mode.lower()]
 
-        elif mode == 'minor':
-            ax.plot(rel_minor[5:-5], linewidth=1.2, color=self.rgu_minor_axis_color)
+        # Draw a first line
+        ax.plot(raw_profile, linewidth=linewidth, color=color)
 
+        # Draw a larger line in the background after applying a convolutionnal filtering on the values
+        if window_size != 1:
+            conv_slope_values = self.get_slope_profiles(window_size=window_size)
+            conv_slope_profiles = {'major':conv_slope_values[0], 'minor':conv_slope_values[1]}
+            conv_profile = conv_slope_profiles[mode.lower()]
+            ax.plot(conv_profile[window_size:-window_size], linewidth=linewidth*15, color=color, alpha=0.5)
+            ax.plot(conv_profile[window_size:-window_size], linewidth=linewidth*2, color='white', alpha=1)
         return ax
 
-    def show_pannel(self, basemap=False):
-
+    def show_pannel(self, basemap=False, window_size=1):
+        
         # Create an empty figure
         fig = plt.figure(figsize=(10, 6))
 
@@ -259,36 +279,55 @@ class RockGlacierUnit:
 
         # Add a first figure 
         # Note : [:,0] in numpy means 'the first column'
-        ax1 = fig.add_subplot(gs[:,0])
+        ax1 = fig.add_subplot(gs[0,0])
         ax1.set_title(f'{self.rgik_pm_workingid} rock glacier')
+
 
         # Add an second figure, first row second column
         ax2 = fig.add_subplot(gs[0,1])
         ax2.set_title(f'{self.rgik_pm_workingid} topographic profile 1')
-        ax2.set_ylabel('relative elevation (meters)')
+        ax2.set_ylabel('elevation (meters)')
 
         # Third figure, second row second column
         ax3 = fig.add_subplot(gs[1,1])
         ax3.set_title(f'{self.rgik_pm_workingid} topographic profile 2')
-        ax3.set_ylabel('relative elevation (meters)')
+        ax3.set_ylabel('elevation (meters)')
 
+        # Forth
         ax4 = fig.add_subplot(gs[0,2])
         ax4.set_title(f'{self.rgik_pm_workingid} slope profile 1')
         ax4.set_ylabel('slope (degrees)')
 
+        # Fiveth
         ax5 = fig.add_subplot(gs[1,2])
         ax5.set_title(f'{self.rgik_pm_workingid} slope profile 2')
         ax5.set_ylabel('slope (degrees)')
+
+        # Sixth
+        ax6 = fig.add_subplot(gs[1,0])
+        ax6.set_title(f'{self.rgik_pm_workingid} slope map')
+        ax6.set_ylabel('slope map')
 
         # Send the result of self.show_map to ax1
         self.show_map(ax=ax1, basemap=basemap)
 
         # Same for ax2 & ax3, with the major & minor profiles
-        self.show_topo_profiles(ax=ax2, mode='major', window_size=5)
-        self.show_topo_profiles(ax=ax3, mode='minor', window_size=5)
+        self.show_topo_profile(ax=ax2, mode='major', window_size=window_size)
+        self.show_topo_profile(ax=ax3, mode='minor', window_size=window_size)
 
-        self.show_slope_profiles(ax=ax4, mode='major')
-        self.show_slope_profiles(ax=ax5, mode='minor')
+        self.show_slope_profile(ax=ax4, mode='major', window_size=window_size)
+        self.show_slope_profile(ax=ax5, mode='minor', window_size=window_size)
+
+        ax6.imshow(self.get_slope().array)
 
         # What's for ?
         plt.tight_layout()
+
+        return fig
+
+
+    def get_points_cloud(self):
+
+        dem = self.get_dem()
+
+        return 'bip_bap'
