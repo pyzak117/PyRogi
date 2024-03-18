@@ -15,7 +15,7 @@ test_study_root_path = '/home/duvanelt/OneDrive/rodynalps_these-thibaut/rodynalp
 test_study_rogi_gpkg_path = Path(test_study_root_path, 'data', f'public-data_{test_rogi_operator}', f'Rogi_{test_rogi_operator}.gpkg')
 test_study_markers_layername = f'primary-markers_{test_rogi_operator}'
 test_study_outlines_layername = f'outlines_{test_rogi_operator}'
-test_working_id_with_outlines = 'val-des-dix-4433'
+test_working_id_with_outlines = 'mont-fort-3601'
 
 # External datasets
 test_dems_dir = Path('/media/duvanelt/LaCie/rock-glaciers_valais/data_dems')
@@ -131,9 +131,26 @@ class TestRockGlacierUnit(unittest.TestCase):
         self.rgu_feature.load_outlines(test_rogi_ous)
 
         # Initialize & load the dem
-        self.rgu_feature.initialize_dem(test_dems_metamap)        
+        self.rgu_feature.initialize_dem(test_dems_metamap)
         self.rgu_feature.get_dem()
-        self.rgu_feature.get_points_cloud()
+
+        # Extract pointscloud
+        points = self.rgu_feature.get_points_cloud(z_factor=2)
+
+        # Test : pointcloud is a numpy array
+        self.assertIsInstance(points, np.ndarray)
+
+    def test_show_points_cloud(self):
+
+        # Insert outlines into the RGU feature
+        self.rgu_feature.load_outlines(test_rogi_ous)
+
+        # Initialize & load the dem
+        self.rgu_feature.initialize_dem(test_dems_metamap)
+        self.rgu_feature.get_dem()
+
+        # Test : display GUI console to show the rock glacier
+        self.rgu_feature.show_points_cloud(z_factor=3)
 
 if __name__ == '__main__':
     unittest.main()

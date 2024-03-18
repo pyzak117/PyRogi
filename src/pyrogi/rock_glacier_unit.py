@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 from telenvi import raster_tools as rt
 from telenvi import vector_tools as vt
+import pyvista as pv
 
 class RockGlacierUnit:
 
@@ -36,14 +37,14 @@ class RockGlacierUnit:
         self.rgu_pm_geom   = self.rgik_pm_geometry
         self.rgu_oue_geom  = None
         self.rgu_our_geom  = None
-        self.rgu_oue_color = '#01A7C2'
-        self.rgu_our_color = '#007090'
+        self.rgu_oue_color = '#023047'
+        self.rgu_our_color = '#219ebc'
         self.rgu_dem       = None
         self.rgu_slope     = None
         self.rgu_geo_major = None
         self.rgu_geo_minor = None
-        self.rgu_major_axis_color = '#006989'
-        self.rgu_minor_axis_color = '#A3BAC3' 
+        self.rgu_major_axis_color = '#ffb703'
+        self.rgu_minor_axis_color = '#3d348b' 
         self.rgu_epsg     = 2056
 
     def _set_attributes_from_rgik_feature(self, rgik_feature):
@@ -269,7 +270,7 @@ class RockGlacierUnit:
             ax.plot(conv_profile[window_size:-window_size], linewidth=linewidth*2, color='white', alpha=1)
         return ax
 
-    def show_pannel(self, basemap=False, window_size=1):
+    def show_pannel(self, basemap=False, window_size=1, z_factor=1):
         
         # Create an empty figure
         fig = plt.figure(figsize=(10, 6))
@@ -281,7 +282,6 @@ class RockGlacierUnit:
         # Note : [:,0] in numpy means 'the first column'
         ax1 = fig.add_subplot(gs[0,0])
         ax1.set_title(f'{self.rgik_pm_workingid} rock glacier')
-
 
         # Add an second figure, first row second column
         ax2 = fig.add_subplot(gs[0,1])
@@ -305,8 +305,8 @@ class RockGlacierUnit:
 
         # Sixth
         ax6 = fig.add_subplot(gs[1,0])
-        ax6.set_title(f'{self.rgik_pm_workingid} slope map')
-        ax6.set_ylabel('slope map')
+        ax6.set_title(f'{self.rgik_pm_workingid} Slope Map')
+        ax6.set_ylabel('Slope Map')
 
         # Send the result of self.show_map to ax1
         self.show_map(ax=ax1, basemap=basemap)
@@ -318,16 +318,54 @@ class RockGlacierUnit:
         self.show_slope_profile(ax=ax4, mode='major', window_size=window_size)
         self.show_slope_profile(ax=ax5, mode='minor', window_size=window_size)
 
-        ax6.imshow(self.get_slope().array)
+        ax6.imshow(self.get_slope().array, cmap='Oranges')
 
         # What's for ?
         plt.tight_layout()
 
         return fig
 
+    def get_points_cloud(self, z_factor=1):
 
-    def get_points_cloud(self):
-
+        # Get the RGU DEM
         dem = self.get_dem()
+        # dem.maskFromVector(self.rgu_oue_geom, epsg=2056)
 
-        return 'bip_bap'
+        # Apply a exageration on it
+        dem *= z_factor
+        dem_array = dem.array
+
+        # Generate corresponding x and y coordinates
+        # Assuming the spatial resolution (cell size) of the DEM is known
+        cell_size = dem.getPixelSize()[0]
+        height, width = dem_array.shape
+        y, x = np.mgrid[0:height, 0:width] * cell_size
+
+        # Optionally, adjust x and y if you have specific origin coordinates
+        x_origin, y_origin = dem.getOrigin()
+        x += x_origin
+        y += y_origin
+
+        # Flatten the x, y, and dem_array to create a list of points
+        points = np.vstack((x.flatten(), y.flatten(), dem_array.flatten())).T
+        return points
+
+    def show_points_cloud(self, z_factor=1, cmap='plasma', point_size=1.5):
+
+        points = self.get_points_cloud(z_factor=z_factor)
+
+        # Convert the points array into a PyVista PolyData object
+        cloud = pv.PolyData(points)
+        
+        # Add elevation as a scalar value for coloring
+        cloud["elevation"] = points[:, 2]
+        
+        # Plot the point cloud with elevation colormap
+        p = pv.Plotter()
+        p.add_mesh(
+            cloud, scalars="elevation", cmap=cmap, point_size=point_size)
+        p.view_isometric()
+
+        p.set_background('black')
+        p.add_axes()
+        p.show()
