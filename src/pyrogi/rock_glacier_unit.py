@@ -37,20 +37,21 @@ class RockGlacierUnit:
         self.rgu_pm_geom   = self.rgik_pm_geometry
         self.rgu_oue_geom  = None
         self.rgu_our_geom  = None
-        self.rgu_oue_color = '#023047'
-        self.rgu_our_color = '#219ebc'
+        self.rgu_oue_color = 'blue'
+        self.rgu_our_color = 'green'
         self.rgu_dem       = None
         self.rgu_slope     = None
         self.rgu_geo_major = None
         self.rgu_geo_minor = None
-        self.rgu_major_axis_color = '#ffb703'
-        self.rgu_minor_axis_color = '#3d348b' 
+        self.rgu_major_axis_color = 'purple'
+        self.rgu_minor_axis_color = 'orange' 
         self.rgu_epsg     = 2056
 
     def _set_attributes_from_rgik_feature(self, rgik_feature):
         """
         Dynamically set attributes based on the GeoSeries feature's columns.
         Transforms column names to create valid Python attribute names.
+        Used for "drink" the PM attributes and the Outlines attributes from a pandas.Series object
         """
 
         # Build a prefix to know where the attributes are coming from
@@ -75,11 +76,61 @@ class RockGlacierUnit:
             # Change points in underscores
             valid_attr_name = valid_attr_name.replace('.', '_')
 
-            # Add rgik as as signature
-            valid_attr_name = f'{attribute_prefix}_{valid_attr_name}'
+            # Add rgik as as signature if not already existing
+            if not attribute_prefix in valid_attr_name:
+                valid_attr_name = f'{attribute_prefix}_{valid_attr_name}'
 
             # Add attribute to the RGU instance
             setattr(self, valid_attr_name, value)
+
+    def get_pm_relatives_attributes_names(self):
+        return [rgu_attr for rgu_attr in dir(self) if 'pm_' in rgu_attr]
+
+    def get_oue_relatives_attributes_names(self):
+        return [rgu_attr for rgu_attr in dir(self) if 'oue_' in rgu_attr]
+
+    def get_our_relatives_attributes_names(self):
+        return [rgu_attr for rgu_attr in dir(self) if 'our_' in rgu_attr]
+
+    def get_series(self):
+        """
+        Send a list of pandas.Series objects. 
+        At least you have one row for the pm_relatives attributes. 
+        And if the outlines are loaded, you have 3 rows, for pm, oue and our.
+        """
+
+        # Create empty pandas rows or series
+        pm_row, oue_row, our_row = (pd.Series(dtype='object'), None, None)
+
+        # Initialize columns and values for each columns from the instance's attributes
+        for rgu_attr_name in self.get_pm_relatives_attributes_names():
+            pm_row[rgu_attr_name] = getattr(self, rgu_attr_name)
+
+        # Change the name of the geometry to easily build geodataframes with this serie
+        pm_row["geometry"] = pm_row["rgu_pm_geom"]
+
+        # Now same job for the outlines
+        if self.outlines_loaded():
+
+            # Extended
+            oue_row = pd.Series(dtype='object')
+            for rgu_attr_name in self.get_oue_relatives_attributes_names():
+                oue_row[rgu_attr_name] = getattr(self, rgu_attr_name)
+        
+            # Add explicit geometry column
+            oue_row["geometry"] = oue_row["rgu_oue_geom"]
+
+            # Add a column to have the name
+            oue_row["Out.Type"] = 'Extended'
+
+            # Restricted
+            our_row = pd.Series(dtype='object')
+            for rgu_attr_name in self.get_our_relatives_attributes_names():
+                our_row[rgu_attr_name] = getattr(self, rgu_attr_name) 
+            our_row["geometry"] = our_row["rgu_our_geom"]
+            our_row["Out.Type"] = 'Restricted'
+        
+        return pm_row, oue_row, our_row
 
     def get_buffer_around_marker(self, buffer_width=500):
         return self.rgu_pm_geom.buffer(buffer_width).envelope
@@ -105,24 +156,60 @@ class RockGlacierUnit:
         # Get the attributes of each outlines into the RGU feature
         [self._set_attributes_from_rgik_feature(outline) for outline in outlines_features.iloc]
 
-        # Rename the geometrics attributes
-        self.rgu_oue_geom = self.rgik_oue_geometry
-        self.rgu_our_geom = self.rgik_our_geometry
-        del self.rgik_oue_geometry
-        del self.rgik_our_geometry
-        return self.rgu_oue_geom, self.rgu_our_geom
+        try:
+            # Rename the geometrics attributes
+            self.rgu_oue_geom = self.rgik_oue_geometry
+            self.rgu_our_geom = self.rgik_our_geometry
 
-    def read_raster_on_rgu(self, target_source  : str | gpd.GeoDataFrame,  layername       : str ='',  nRes            : numbers.Real = None, buffer_width    : numbers.Real = 500, load_pixels     : bool = False) -> rt.geoim.Geoim:
+            # Like "rename" the attributes
+            del self.rgik_oue_geometry
+            del self.rgik_our_geometry
+
+            return self.rgu_oue_geom, self.rgu_our_geom 
+
+        except AttributeError:
+            return None, None
+
+    def outlines_loaded(self):
+        return self.rgu_oue_geom is not None
+
+    def read_raster_on_rgu(self, 
+            target_source   : str | gpd.GeoDataFrame,  
+            layername       : str ='',  
+            nRes            : numbers.Real = None, 
+            buffer_width    : numbers.Real = 500, 
+            load_pixels     : bool = False):
         """
         Open any raster or set of rasters on the extent of the rock glacier
         Caution : the epsg have to be the same for the raster and for the rgu
+
+        target_source : a string to a raster or to a raster dir or a geodataframe
+        layername     : to access the good layer if target_source is a path to a geopackage
         """
+
+        # Get the extent of the Rock Glacier Unit
         aoi = self.get_most_representative_polygon(buffer_width)
-        print(f"load pixels : {load_pixels}")
-        target = rt.OpenFromMultipleTargets(target_source = target_source, layername = layername, area_of_interest = aoi, nRes = nRes, load_pixels=load_pixels)
+
+        # Load the raster or rasters on this extent, with resampling if needed
+        target = rt.OpenFromMultipleTargets(
+            target_source = target_source, 
+            layername = layername, 
+            area_of_interest = aoi, 
+            nRes = nRes, 
+            load_pixels=load_pixels)
+        
         return target
 
-    def initialize_dem(self, dem_source  : str | gpd.GeoDataFrame,  layername   : str ='',  nRes        : numbers.Real = None, width       : numbers.Real = 500) -> gdal.Dataset:
+    def initialize_dem(self,
+        dem_source  : str | gpd.GeoDataFrame,  
+        layername   : str ='', 
+        nRes        : numbers.Real = None, 
+        width       : numbers.Real = 500) -> gdal.Dataset:
+        """
+        Open any DEM or set of DEMS on the extent of the rock glacier
+        target_source : a string to a DEM or to a DEM dir or a geodataframe with metadata of the DEMS
+        layername     : to access the good layer if target_source is a path to a geopackage        
+        """
         self.rgu_dem = self.read_raster_on_rgu(dem_source, layername, nRes, width, load_pixels=False)
         return self.rgu_dem
 
@@ -150,8 +237,13 @@ class RockGlacierUnit:
             self.rgu_slope = rt.getSlope(self.get_dem())
         return self.rgu_slope
 
+    def get_altitudinal_range(self):
+        dem = self.get_dem()
+        dem.maskFromVector(self.rgu_oue_geom, epsg=2056)
+        return np.array(np.min(dem.array), np.max(dem.array))
+
     def get_geo_segments(self):
-        assert self.rgu_oue_geom is not None, 'outlines unknown'
+        assert self.outlines_loaded(), 'outlines unloaded'
         if self.rgu_geo_major is not None and self.rgu_geo_minor is not None:
             return self.rgu_geo_major, self.rgu_geo_minor
         else:  self.rgu_geo_major, self.rgu_geo_minor = vt.getMainAxes(self.rgu_oue_geom)        
@@ -192,6 +284,17 @@ class RockGlacierUnit:
         slope_major_profile, slope_minor_profile = self.get_raster_values_on_geo_segments(slope, window_size)
         return slope_major_profile, slope_minor_profile
     
+    def close_dem(self):
+        """
+        Delete from memory the dem and the slope, which are 2 heavy objects
+        """
+        del self.rgu_dem
+        return None
+
+    def close_slope(self):
+        del self.rgu_slope
+        return None
+
     def show_map(self, ax='', basemap=False):
 
         # Define an empty ax if not provided

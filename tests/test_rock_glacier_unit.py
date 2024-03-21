@@ -1,3 +1,4 @@
+import pandas as pd
 import numpy as np
 from osgeo import gdal
 import shapely
@@ -151,6 +152,65 @@ class TestRockGlacierUnit(unittest.TestCase):
 
         # Test : display GUI console to show the rock glacier
         self.rgu_feature.show_points_cloud(z_factor=3)
+
+    def test_get_altitudinal_range(self):
+        
+        # Insert outlines into the RGU feature
+        self.rgu_feature.load_outlines(test_rogi_ous)
+
+        # Initialize & load the dem
+        self.rgu_feature.initialize_dem(test_dems_metamap)
+        self.rgu_feature.get_dem()
+
+        # Get the lowest and higher point in the rock glacier
+        lowest_point, higher_point = self.rgu_feature.get_altitudinal_range()
+        
+        # Test : the points must be greater than 1000 (just avoid nodata)
+        self.assertGreater(lowest_point, 500)
+        self.assertGreater(higher_point, 500)
+
+    def test_get_series_without_outlines(self):
+
+        # Test the creation of a pandas.serie from the instance attributes
+        # We should get a list with [pd.Series, None, None]
+        pm_row, oue_row, our_row = self.rgu_feature.get_series()
+        self.assertIsInstance(pm_row, pd.Series)
+        self.assertIsNone(oue_row)
+        self.assertIsNone(our_row)
+        print(pm_row)
+
+    def test_get_series_with_outlines(self):
+
+        # Insert outlines into the RGU feature
+        self.rgu_feature.load_outlines(test_rogi_ous)
+
+        # Get the relatives series
+        pm_row, oue_row, our_row = self.rgu_feature.get_series()
+
+        # Test type of each
+        self.assertIsInstance(pm_row, pd.Series)
+        self.assertIsInstance(oue_row, pd.Series)
+        self.assertIsInstance(our_row, pd.Series)
+        print(our_row)
+
+    def test_get_topographic_values(self):
+
+        # Insert outlines into the RGU feature
+        self.rgu_feature.load_outlines(test_rogi_ous)
+
+        # Initialize & load the dem
+        self.rgu_feature.initialize_dem(test_dems_metamap)        
+        self.rgu_feature.get_dem()
+
+        # Test : get topographic values
+        topo_values = self.rgu_feature.get_topographic_values(test_dems_metamap)
+        # Test if the dernier and avant dernier elements of the topo_values list
+        # which corresponds to alt_max and alt_min are coherents
+        self.assertGreater(topo_values[-1], topo_values[-2])
+
+        # Test if the attribute rgu_dem is well deleted from memory
+        with self.assertRaises(Exception):
+            print(self.rgu_feature.rgu_dem.array[0])
 
 if __name__ == '__main__':
     unittest.main()
