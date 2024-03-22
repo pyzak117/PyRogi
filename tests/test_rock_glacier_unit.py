@@ -78,6 +78,22 @@ class TestRockGlacierUnit(unittest.TestCase):
         plt.title(f"{self.rgu_feature.rgik_pm_workingid} Slope")
         self.rgu_feature.rgu_slope.show()
 
+    def test_aspect_loading(self):
+
+        # Initialize & load the dem
+        self.rgu_feature.initialize_dem(test_dems_metamap, nRes=10)        
+        self.rgu_feature.get_dem()
+
+        # aspect loading
+        self.rgu_feature.get_aspect()
+
+        # Test : the rgu_aspect attribute should new be a Geoim
+        self.assertIsInstance(self.rgu_feature.rgu_aspect, rt.geoim.Geoim)
+
+        # Display it
+        plt.title(f"{self.rgu_feature.rgik_pm_workingid} aspect")
+        self.rgu_feature.rgu_aspect.show()
+
     def test_extended_outline(self):
 
         # Insert outlines into the RGU feature

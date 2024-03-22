@@ -74,11 +74,21 @@ class TestRockGlacierInventory(unittest.TestCase):
         cropped_rogi.show_map(basemap=True)
         plt.show()
 
-    def test_get_altitudinal_values(self):
+    def test_get_altis_ranges(self):
         cropped_rogi = self.test_rogi_from_layers.crop(test_crop_area)
-        altis = cropped_rogi.get_altitudinal_values(
+
+        altis = cropped_rogi.get_alti_ranges(
             dem_source=test_dems_metamap, nRes=5)
-        self.assertIsInstance(altis, np.ndarray)
-        
+
+        self.assertIsInstance(altis, pd.DataFrame)
+
+    def test_show_alti_ranges_with_hbars(self):
+        self.test_rogi_from_layers.show_alti_ranges_with_hbars(dem_source=test_dems_metamap)
+        plt.show()
+
+    def test_show_alti_ranges_with_boxes(self):
+        self.test_rogi_from_layers.show_alti_ranges_with_boxes(dem_source=test_dems_metamap)
+        plt.show()
+
 if __name__ == '__main__':
     unittest.main()

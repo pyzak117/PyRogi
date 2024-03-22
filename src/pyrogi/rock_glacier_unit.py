@@ -34,13 +34,14 @@ class RockGlacierUnit:
         self._set_attributes_from_rgik_feature(rgik_feature)
         
         # Rename some of the attributes
-        self.rgu_pm_geom   = self.rgik_pm_geometry
+        self.rgu_pm_geom = self.rgik_pm_geometry
         self.rgu_oue_geom  = None
         self.rgu_our_geom  = None
         self.rgu_oue_color = 'blue'
         self.rgu_our_color = 'green'
         self.rgu_dem       = None
         self.rgu_slope     = None
+        self.rgu_aspect    = None
         self.rgu_geo_major = None
         self.rgu_geo_minor = None
         self.rgu_major_axis_color = 'purple'
@@ -84,13 +85,42 @@ class RockGlacierUnit:
             setattr(self, valid_attr_name, value)
 
     def get_pm_relatives_attributes_names(self):
-        return [rgu_attr for rgu_attr in dir(self) if 'pm_' in rgu_attr]
+        return [rgu_attr for rgu_attr in dir(self) if 'pm_' in rgu_attr and not 'get' in rgu_attr]
 
     def get_oue_relatives_attributes_names(self):
-        return [rgu_attr for rgu_attr in dir(self) if 'oue_' in rgu_attr]
+        return [rgu_attr for rgu_attr in dir(self) if 'oue_' in rgu_attr and not 'get' in rgu_attr]
 
     def get_our_relatives_attributes_names(self):
-        return [rgu_attr for rgu_attr in dir(self) if 'our_' in rgu_attr]
+        return [rgu_attr for rgu_attr in dir(self) if 'our_' in rgu_attr and not 'get' in rgu_attr]
+
+    def smashed_in_serie(self):
+        """
+        Send a pandas.Series object. with all the attributes. 
+        The column 'geometry' is set from the extended outlines
+        """
+
+        # Check availibility of the outlines
+        assert self.outlines_loaded(), 'nothing to smash because no outlines'
+
+        # Create empty serie
+        rgu_row = pd.Series(dtype='object')
+
+        # Add Primary Markers attributes
+        for rgu_attr_name in self.get_pm_relatives_attributes_names():
+            rgu_row[rgu_attr_name] = getattr(self, rgu_attr_name)
+        
+        # Add restricted outlines attributes
+        for rgu_attr_name in self.get_our_relatives_attributes_names():
+            rgu_row[rgu_attr_name] = getattr(self, rgu_attr_name) 
+        
+        # Add extended outlines attributes
+        for rgu_attr_name in self.get_oue_relatives_attributes_names():
+            rgu_row[rgu_attr_name] = getattr(self, rgu_attr_name)
+
+            # Add explicit geometry column
+            rgu_row["geometry"] = self.rgu_oue_geom
+
+        return rgu_row
 
     def get_series(self):
         """
@@ -231,16 +261,26 @@ class RockGlacierUnit:
         """
         Return a slope raster with degrees values. The DEM have to be initialized on the RGU feature.
         """
-        if self.rgu_slope is not None:
-            return self.rgu_slope
-        else:
+        if self.rgu_slope is None:
             self.rgu_slope = rt.getSlope(self.get_dem())
         return self.rgu_slope
 
+    def get_aspect(self):
+        """
+        Return an aspect raster with degrees values. The DEM have to be initialized on the RGU feature.
+        """
+        if self.rgu_aspect is None:
+            self.rgu_aspect = rt.getAspect(self.get_dem())
+        return self.rgu_aspect
+
+    def get_alti_pm(self):
+        dem = self.get_dem()
+        return dem.inspectGeoPoint(self.rgu_pm_geom)
+        
     def get_altitudinal_range(self):
         dem = self.get_dem()
         dem.maskFromVector(self.rgu_oue_geom, epsg=2056)
-        return np.array(np.min(dem.array), np.max(dem.array))
+        return np.array((np.min(dem.array), np.max(dem.array)))
 
     def get_geo_segments(self):
         assert self.outlines_loaded(), 'outlines unloaded'
