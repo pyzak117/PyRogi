@@ -14,6 +14,11 @@ from telenvi import raster_tools as rt
 from telenvi import vector_tools as vt
 import pyvista as pv
 
+import warnings
+
+# Supprimer tous les avertissements
+warnings.filterwarnings("ignore")
+    
 class RockGlacierUnit:
 
     """
@@ -334,7 +339,11 @@ class RockGlacierUnit:
     def close_slope(self):
         del self.rgu_slope
         return None
-
+        
+    def close_aspect(self):
+        del self.rgu_aspect
+        return None
+        
     def show_map(self, ax='', basemap=False):
 
         # Define an empty ax if not provided

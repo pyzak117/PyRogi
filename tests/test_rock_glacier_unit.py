@@ -16,7 +16,7 @@ test_study_root_path = '/home/duvanelt/OneDrive/rodynalps_these-thibaut/rodynalp
 test_study_rogi_gpkg_path = Path(test_study_root_path, 'data', f'public-data_{test_rogi_operator}', f'Rogi_{test_rogi_operator}.gpkg')
 test_study_markers_layername = f'primary-markers_{test_rogi_operator}'
 test_study_outlines_layername = f'outlines_{test_rogi_operator}'
-test_working_id_with_outlines = 'mont-fort-3601'
+test_working_id_with_outlines = 'mont-fort-116'
 
 # External datasets
 test_dems_dir = Path('/media/duvanelt/LaCie/rock-glaciers_valais/data_dems')
