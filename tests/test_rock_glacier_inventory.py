@@ -3,7 +3,7 @@ import numpy as np
 from osgeo import gdal
 import shapely
 from telenvi import raster_tools as rt
-from pyrogi.rock_glacier_inventory import get_rogi_from_layers, get_rogi_from_population, RockGlacierInventory
+from pyrogi.rock_glacier_inventory import RockGlacierInventory
 from pyrogi.rock_glacier_unit import RockGlacierUnit
 import geopandas as gpd
 import unittest
@@ -13,82 +13,49 @@ from matplotlib import pyplot as plt
 
 # Define path to tests inputs datasets
 test_rogi_operator = 'td'
-test_study_root_path = '/home/duvanelt/OneDrive/rodynalps_these-thibaut/rodynalps_collaborative-rogi/rogi_valais'
-test_study_rogi_gpkg_path = Path(test_study_root_path, 'data', f'public-data_{test_rogi_operator}', f'Rogi_{test_rogi_operator}.gpkg')
-test_study_markers_layername = f'primary-markers_{test_rogi_operator}'
-test_study_outlines_layername = f'outlines_{test_rogi_operator}'
+
+# Directory with the rogi
+test_study_root_path = '/media/duvanelt/Data_Part1/rogi_switzerland_unil_unifr_rodynalps_phd_thib/garage/rogi_ch_2.0/'
+test_study_rogi_gpkg_path = Path(test_study_root_path, 'rogi_ch_2.0.gpkg')
+
+# Layernames
+test_study_markers_layername = f'rogi_ch_pms_cur'
+test_study_outlines_layername = f'rogi_ch_ous_cur'
 
 # External datasets
-test_dems_dir = Path('/media/duvanelt/LaCie/rock-glaciers_valais/data_dems')
-test_dems_metamap = gpd.read_file('/home/duvanelt/Desktop/dem_maps.gpkg')
-test_crop_area = gpd.read_file('/home/duvanelt/Desktop/crop_area.gpkg').iloc[0].geometry
+test_dem_srtm = Path('/media/duvanelt/Data_Part1/geodata_switzerland_insar_glaciers_dem-srtm/srtm_dems/SRTM')
+
+# test_dems_dir = Path('/media/duvanelt/LaCie/geodata_raster_dems_insars_aerial/raster_tiles_dems_swiss-surface3d-ss3d')
+# test_dems_metamap = gpd.read_file(Path(test_dems_dir, 'ss3d-extent-map.gpkg'))
+test_crop_area = gpd.read_file('/home/duvanelt/PyRogi/tests/test_data/cropping.gpkg').iloc[0].geometry
 
 # Open datatest
 test_epsg=2056
 test_rogi_pms = gpd.read_file(test_study_rogi_gpkg_path, layer=test_study_markers_layername).to_crs(epsg=test_epsg)
 test_rogi_ous = gpd.read_file(test_study_rogi_gpkg_path, layer=test_study_outlines_layername).to_crs(epsg=test_epsg)
-
+test_version_note = 'saucisse'
 
 class TestRockGlacierInventory(unittest.TestCase):
 
     def setUp(self):
-        self.test_rogi_from_layers = get_rogi_from_layers(
-                primary_markers_layer     = test_study_rogi_gpkg_path,
-                outlines_layer            = test_study_rogi_gpkg_path,
-                primary_markers_layername = test_study_markers_layername,
-                outlines_layername        = test_study_outlines_layername,
-                primary_markers_epsg      = test_epsg,
-                outlines_epsg             = test_epsg)
+        self.test_rogi = RockGlacierInventory(
+                pms_layer = test_study_rogi_gpkg_path,
+                ous_layer = test_study_rogi_gpkg_path,
+                epsg      = test_epsg,
+                version_note=test_version_note)
 
     def test_get_rogi_from_layers(self):
-        self.assertIsInstance(self.test_rogi_from_layers, RockGlacierInventory)
+        self.assertIsInstance(self.test_rogi, RockGlacierInventory)
 
-    def test_get_population_from_layers(self):
-        population = self.test_rogi_from_layers.get_population()
-        self.assertIsInstance(random.choice(population), RockGlacierUnit)
+    def test_make_figdir(self):
+        self.assertTrue(self.test_rogi.fig_dir.exists())
 
     def test_show_map(self):
-        self.test_rogi_from_layers.show_map()
-        plt.show()
+        self.test_rogi.show_map(save_fig=True)
+        self.assertTrue(Path(self.test_rogi.fig_dir, f'rogimap_{self.test_rogi.version}.png').exists())
 
-    def test_get_rogi_from_population(self):
-
-        # Get a list of Rock Glacier Units from the rogi feature test
-        population = self.test_rogi_from_layers.get_population()
-
-        # Extract a sample of this population
-        sub_population = population[10:20]
-
-        # Try to create a new rogi from this population
-        tested = get_rogi_from_population(sub_population, epsg=test_epsg)
-
-        # Test : tested must be a RockGlacierInventory feature
-        self.assertIsInstance(tested, RockGlacierInventory)
-
-        # Test : show the map to see if it changed
-        tested.show_map(basemap=True)
-        plt.show()
-
-    def test_crop(self):
-        cropped_rogi = self.test_rogi_from_layers.crop(test_crop_area)
-        cropped_rogi.show_map(basemap=True)
-        plt.show()
-
-    def test_get_altis_ranges(self):
-        cropped_rogi = self.test_rogi_from_layers.crop(test_crop_area)
-
-        altis = cropped_rogi.get_alti_ranges(
-            dem_source=test_dems_metamap, nRes=5)
-
-        self.assertIsInstance(altis, pd.DataFrame)
-
-    def test_show_alti_ranges_with_hbars(self):
-        self.test_rogi_from_layers.show_alti_ranges_with_hbars(dem_source=test_dems_metamap)
-        plt.show()
-
-    def test_show_alti_ranges_with_boxes(self):
-        self.test_rogi_from_layers.show_alti_ranges_with_boxes(dem_source=test_dems_metamap)
-        plt.show()
+    def test_version(self):
+        print(self.test_rogi.version)
 
 if __name__ == '__main__':
     unittest.main()
