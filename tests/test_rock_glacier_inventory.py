@@ -1,61 +1,78 @@
-import pandas as pd
-import numpy as np
-from osgeo import gdal
-import shapely
-from telenvi import raster_tools as rt
-from pyrogi.rock_glacier_inventory import RockGlacierInventory
-from pyrogi.rock_glacier_unit import RockGlacierUnit
-import geopandas as gpd
-import unittest
-from pathlib import Path
-import random
-from matplotlib import pyplot as plt
-
-# Define path to tests inputs datasets
-test_rogi_operator = 'td'
+from load import *
 
 # Directory with the rogi
-test_study_root_path = '/media/duvanelt/Data_Part1/rogi_switzerland_unil_unifr_rodynalps_phd_thib/garage/rogi_ch_2.0/'
-test_study_rogi_gpkg_path = Path(test_study_root_path, 'rogi_ch_2.0.gpkg')
+test_study_rogi_gpkg_path = Path(datamap['rogi_ch_data_current_2.0'])
 
 # Layernames
-test_study_markers_layername = f'rogi_ch_pms_cur'
-test_study_outlines_layername = f'rogi_ch_ous_cur'
+test_study_markers_layername = datamap['rogi_ch_data_current_2.0_pms_layername']
+test_study_outlines_layername = datamap['rogi_ch_data_current_2.0_ous_layername']
 
 # External datasets
-test_dem_srtm = Path('/media/duvanelt/Data_Part1/geodata_switzerland_insar_glaciers_dem-srtm/srtm_dems/SRTM')
+test_dem_srtm = Path(datamap['srtm_dem_path'])
+test_sa3d_dir = Path(datamap['sa3d_dir'])
+test_dems_metamap_path = datamap['sa3d_map']
+test_crop_zone_path = Path(Path(__file__).parent, '_test_data', 'cropping.gpkg')
 
-# test_dems_dir = Path('/media/duvanelt/LaCie/geodata_raster_dems_insars_aerial/raster_tiles_dems_swiss-surface3d-ss3d')
-# test_dems_metamap = gpd.read_file(Path(test_dems_dir, 'ss3d-extent-map.gpkg'))
-test_crop_area = gpd.read_file('/home/duvanelt/PyRogi/tests/test_data/cropping.gpkg').iloc[0].geometry
+# test_dems_metamap = gpd.read_file(test_dems_metamap)
 
-# Open datatest
+# Load datasets
 test_epsg=2056
-test_rogi_pms = gpd.read_file(test_study_rogi_gpkg_path, layer=test_study_markers_layername).to_crs(epsg=test_epsg)
-test_rogi_ous = gpd.read_file(test_study_rogi_gpkg_path, layer=test_study_outlines_layername).to_crs(epsg=test_epsg)
+test_rogi_pms = gpd.read_file(test_study_rogi_gpkg_path, layer=test_study_markers_layername)
+test_rogi_ous = gpd.read_file(test_study_rogi_gpkg_path, layer=test_study_outlines_layername)
+test_crop_zone = gpd.read_file(test_crop_zone_path)
+
+# Selections
+test_rogi_pms = test_rogi_pms[test_rogi_pms.pm_type=='rock_glacier']
+test_rogi_pms = vt.spatial_selection(test_rogi_pms, test_crop_zone)
+test_rogi_ous = vt.spatial_selection(test_rogi_ous, test_crop_zone)
+
 test_version_note = 'saucisse'
 
 class TestRockGlacierInventory(unittest.TestCase):
 
     def setUp(self):
         self.test_rogi = RockGlacierInventory(
-                pms_layer = test_study_rogi_gpkg_path,
-                ous_layer = test_study_rogi_gpkg_path,
+                pms_layer = test_rogi_pms,
+                ous_layer = test_rogi_ous,
                 epsg      = test_epsg,
-                version_note=test_version_note)
-
-    def test_get_rogi_from_layers(self):
-        self.assertIsInstance(self.test_rogi, RockGlacierInventory)
-
-    def test_make_figdir(self):
-        self.assertTrue(self.test_rogi.fig_dir.exists())
-
-    def test_show_map(self):
-        self.test_rogi.show_map(save_fig=True)
-        self.assertTrue(Path(self.test_rogi.fig_dir, f'rogimap_{self.test_rogi.version}.png').exists())
+                version_note=test_version_note,
+                fig_dir = f"{Path(__file__).with_name('_test_fig_dir')}")
 
     def test_version(self):
-        print(self.test_rogi.version)
+        print(self.test_rogi.get_version())
+    
+    def test_copy(self):
+        old = self.test_rogi
+        new = old.copy()
+        new.pms_layer['pm_pid'] = 'new_' + new.pms_layer.pm_pid
+        self.assertTrue(new.pms_layer.iloc[0].pm_pid != old.pms_layer.iloc[0].pm_pid)
+
+    def test_show_map(self):
+        # Draw a map
+        self.test_rogi.show_map(save_fig=True)
+
+        # Check if it has been correctly generated
+        self.assertTrue(Path(self.test_rogi.fig_dir, f"rogimap_{self.test_rogi.get_version()}.png").exists())
+
+    def test_get_alti_metrics(self):
+        """
+        Test the method to merge a DEM folder and the rogi
+        """
+        pass
+
+        # Read the DEMS
+        # Compute the metrics
+        # Write the enhanced dataset
+        # Check if the file exists
+        # And if the columns regarding elevation are there
+
+        self.test_rogi.get_alti_metrics(
+            dem_map = test_dems_metamap_path,
+            dem_res_order_1=5, 
+            dem_res_order_2=0.5,
+        )
+
+        self.assertIsInstance(self.test_rogi.enhanced_layer, gpd.GeoDataFrame)
 
 if __name__ == '__main__':
     unittest.main()

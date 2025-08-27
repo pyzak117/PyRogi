@@ -1,3 +1,4 @@
+import sys
 from osgeo import gdal
 import numbers
 from typing import List
@@ -20,9 +21,9 @@ from tqdm import tqdm
 # import pyinsar
 import warnings
 
-# Supprimer tous les avertissements
+# Supprimer tous les avertissements de geopandas
 warnings.filterwarnings("ignore")
-   
+
 def identify_feature_type(rogi_ch_feature):
     """
     Check if a rogi_ch_feature is a Primary Marker, an extended outline or a restricted outline
@@ -104,7 +105,6 @@ class RockGlacierUnit:
                 if column_name == 'geometry':
                     clean_att_name = f"rgu_{ft_type}_geom"
                     if not value.is_valid:
-                        print('geom patch')
                         value = value.buffer(0)
                 else:
                     clean_att_name = f"rgu_{ft_type}_{column_name[3:]}"
@@ -222,7 +222,6 @@ class RockGlacierUnit:
                 self.rgu_our_geom = self.rgu_oue_geom
             elif self.rgu_oue_geom is None:
                 self.rgu_oue_geom = self.rgu_our_geom
-
             return self.rgu_oue_geom, self.rgu_our_geom
 
         except AttributeError:
@@ -434,7 +433,6 @@ class RockGlacierUnit:
 
         # Else : we simply draw a buffer around the primary marker and we show it
         else:
-            print('Outlines not loaded - display only the Primary Marker')
             # Create a buffer around the marker but do not show it
             basic_extent = gpd.GeoSeries([self.get_buffer_around_marker(buffersize)]).plot(ax=ax, alpha=0)
 
@@ -602,7 +600,6 @@ class RockGlacierUnit:
 
         p.set_background('black')
         p.add_axes()
-        p.show()
 
     def get_moving_areas_one_interval(
         self,
@@ -620,6 +617,8 @@ class RockGlacierUnit:
         polygons_rounded_factor=30,
         min_overlap=2,
         ):
+
+        return None
 
         if orbit.lower()[0] == 'd':
             sentinel_1_track = 'T138D'
@@ -687,11 +686,11 @@ class RockGlacierUnit:
         dem = self.get_dem()
 
         # Process for Extended outline
-        if out_type.startswith('ext'):
+        if out_type.lower()[0]=='e':
             dem.maskFromVector(self.rgu_oue_geom, epsg=2056)
 
         # Same for Restricted
-        elif out_type.startswith('res'):
+        else:
             dem.maskFromVector(self.rgu_our_geom, epsg=2056)
 
         res = np.array((ma.min(dem.array[dem.array > 0]), ma.max(dem.array[dem.array > 0])))
@@ -868,54 +867,117 @@ class RockGlacierUnit:
 
         return target_tiles
 
-    def get_detailled_serie(self, source_dem, dem_res_order_1=5, dem_res_order_2=0.5, terrain_attributes=False):
+    def get_basic_serie(self, rgu_row=None):
         """
-        Make a very detailled pandas.series (a 'line' of a dataset)
+        Transfer the feature into a pandas serie or gpd.geoserie with the mandatory attributes
+        """
+
+        # Check the availibility of geometry
+        if not self.extended_outlines_loaded() and not self.restricted_outlines_loaded():
+            return None
+
+        # Create a pandas serie
+        if rgu_row is None:
+            rgu_row = pd.Series(dtype='object')
+
+        # PM Metadata
+        rgu_row['pm_pid'] = self.pm_pid
+        rgu_row['pm_working_id'] = self.pm_working_id
+        rgu_row['pm_alter_id'] = self.pm_alter_id
+        rgu_row['pm_comment'] = self.pm_comment
+
+        # Morphology
+        rgu_row['rgu_morphology'] = self.rgu_morphology
+        rgu_row['rgu_complete'] = self.rgu_complete
+
+        # RGS
+        rgu_row['rgu_rgs_type'] = self.rgu_rgs_type
+
+        # Upslope connection
+        rgu_row['rgu_upsl_cur'] = self.rgu_upsl_cur
+        rgu_row['upslope_con'] = self.rgu_upsl_con
+
+        # Activity
+        rgu_row['rgu_activity_assessment'] = self.rgu_activity_assessment
+        rgu_row['rgu_activity_class'] = self.get_activity()
+        rgu_row['rgu_destabilized'] = self.rgu_destabilized
+
+        # Kinematics
+        rgu_row['rgu_kin_att'] = self.rgu_kin_att
+        rgu_row['rgu_kin_radar'] = self.rgu_kin_radar
+        rgu_row['rgu_kin_optical'] = self.rgu_kin_optical
+
+        # 2D geometry
+        rgu_row['len_min_our'], rgu_row['len_max_our'] = self.get_lengths('r')
+        rgu_row['surf_our_ha'] = self.rgu_our_geom.area / 10000
+        rgu_row['elongated_our_ratio'] = self.get_elongated_ratio('r')
+
+        rgu_row['len_min_oue'], rgu_row['len_max_oue'] = self.get_lengths('e')
+        rgu_row['elongated_oue_ratio'] = self.get_elongated_ratio('e')
+        rgu_row['surf_oue_ha'] = self.rgu_oue_geom.area / 10000
+
+        # Load the margins and compute a few stats on it
+        self.load_margins()
+        if self.rgu_oue_geom != self.rgu_our_geom:
+            rgu_row['surf_margins'] = self.rgu_margins_geom.area / 10000
+        else:
+            rgu_row['surf_margins'] = 0
+
+        rgu_row['oue_geom'] = self.rgu_oue_geom
+        rgu_row['our_geom'] = self.rgu_our_geom
+        rgu_row['pm_geom'] = self.pm_geom
+
+        return rgu_row
+
+    def get_alti_metrics(
+        self, 
+        rgu_row,
+        source_dem, 
+        dem_res_order_1=5, 
+        dem_res_order_2=0.5,
+        ):
+
+        """
+        Read the DEMs and compute different metrics within the feature.
         The dem_res_order_1 refers to the size of dem pixels which will be used to compute variables such as the cardinal point of the rock glacier
         order_2 will be used for variables such as the mean slope in the margins, asking for a more fine-grain dem.
         """
-
-        if not self.extended_outlines_loaded() and not self.extended_outlines_loaded():
-            return None
-
+        
+        # Create new polygons for the rock glacier margins, between ext and rest outlines
         self.load_margins()
 
-        rgu_row = pd.Series(dtype='object')
-        rgu_row['pm_pid'] = self.pm_pid
+        # Load DEM with resolution order 1
+        self.initialize_dem(source_dem, nRes=dem_res_order_1)
 
-        # Activity and kinematics
-        rgu_row['rgu_activity_class'] = self.get_activity()
-        rgu_row['rgu_kin_att'] = self.rgu_kin_att
-        rgu_row['rgu_destabilized'] = self.rgu_destabilized
+        # Compute rough topo indexes
+        rgu_row['cardi_pt'] = self.get_cardinal_point()
+        rgu_row['alti_oue_min'], rgu_row['alti_oue_max'] = self.get_alti_ranges('e')
+        rgu_row['alti_our_min'], rgu_row['alti_our_max'] = self.get_alti_ranges('r')
+        rgu_row['alti_oue_med'], rgu_row['alti_oue_mean'] = self.get_alti_med_mean('e')
+        rgu_row['alti_our_med'], rgu_row['alti_our_mean'] = self.get_alti_med_mean('r')
+        rgu_row['alti_pm'] = self.get_alti_pm()
+        rgu_row['slope_oue_min'], rgu_row['slope_oue_max'] = self.get_slope_ranges('e')
+        rgu_row['slope_oue_med'], rgu_row['slope_oue_mean'] = self.get_slope_med_mean('e')    
+        rgu_row['slope_our_med'], rgu_row['slope_our_mean'] = self.get_slope_med_mean('r')
+        rgu_row['slope_our_min'], rgu_row['slope_our_max'] = self.get_slope_ranges('r')
 
-        if terrain_attributes :
+        # Reload the dem with the 2nd order
+        del self.rgu_dem
+        del self.rgu_slope
+        self.rgu_dem = None
+        self.rgu_slope = None
+        self.initialize_dem(source_dem, nRes=dem_res_order_2)
 
-            # Load DEM with resolution order 1
-            self.initialize_dem(source_dem, nRes=dem_res_order_1)
+        # Compute detailled topo indexes
+        rgu_row['slope_marg_min'], rgu_row['slope_marg_max'], rgu_row['slope_marg_med'], rgu_row['slope_marg_mean'] = self.get_slope_stats_margins()
 
-            # Compute rough topo indexes
-            rgu_row['cardi_pt'] = self.get_cardinal_point()
-            rgu_row['alti_oue_min'], rgu_row['alti_oue_max'] = self.get_alti_ranges('e')
-            rgu_row['alti_our_min'], rgu_row['alti_our_max'] = self.get_alti_ranges('r')
-            rgu_row['alti_oue_med'], rgu_row['alti_oue_mean'] = self.get_alti_med_mean('e')
-            rgu_row['alti_our_med'], rgu_row['alti_our_mean'] = self.get_alti_med_mean('r')
-            rgu_row['alti_pm'] = self.get_alti_pm()
-            rgu_row['slope_oue_min'], rgu_row['slope_oue_max'] = self.get_slope_ranges('e')
-            rgu_row['slope_oue_med'], rgu_row['slope_oue_mean'] = self.get_slope_med_mean('e')    
-            rgu_row['slope_our_med'], rgu_row['slope_our_mean'] = self.get_slope_med_mean('r')
-            rgu_row['slope_our_min'], rgu_row['slope_our_max'] = self.get_slope_ranges('r')
-    
-            # Reload the dem with the 2nd order
-            del self.rgu_dem
-            del self.rgu_slope
-            self.rgu_dem = None
-            self.rgu_slope = None
-            self.initialize_dem(source_dem, nRes=dem_res_order_2)
+        return rgu_row
 
-            # Compute detailled topo indexes
-            rgu_row['slope_marg_min'], rgu_row['slope_marg_max'], rgu_row['slope_marg_med'], rgu_row['slope_marg_mean'] = self.get_slope_stats_margins()
-
-        # 2D geometry
+    def get_2D_geom_indexes(self, rgu_row):
+        """
+        Detailled elements regarding the polygons geometry
+        """
+        # Detailled elements regarding the geometry
         rgu_row['len_min_our'], rgu_row['len_max_our'] = self.get_lengths('r')
         rgu_row['surf_our_ha'] = self.rgu_our_geom.area / 10000
         rgu_row['elongated_our_ratio'] = self.get_elongated_ratio('r')
@@ -929,24 +991,39 @@ class RockGlacierUnit:
         else:
             rgu_row['surf_margins'] = 0
 
-        # Moving Areas
-        # if len(self.rgu_our_mas) > 0:
-        #     rgu_row['surf_oue_covered_by_ma_ratio'] = (self.rgu_oue_mas.dissolve().area.iloc[0] / 10000) / rgu_row['surf_oue_ha'] * 100
-        #     rgu_row['surf_our_covered_by_ma_ratio'] = (self.rgu_our_mas.dissolve().area.iloc[0] / 10000) / rgu_row['surf_our_ha'] * 100
-        # else:
-        #     rgu_row['surf_oue_covered_by_ma_ratio'] = 0
-        #     rgu_row['surf_our_covered_by_ma_ratio'] = 0
+        return rgu_row
 
-        # Geometry
-        # TODO : on peut mettre plusieurs géométries différentes dans un gdf pour peu que les colonnes ne s'appellent pas "geometry"
-        # On peut ensuite modifier la géométrie active de l'entité avec set_geometry('column_name').
-        # En revanche, pour l'écrire dans un fichier gpkg ou shapefile, ce n'est pas possible : il faut une et unique colonne contenant
-        # des objets de type geometry. 
-        rgu_row['oue_geom'] = self.rgu_oue_geom
+    def get_detailled_serie(self, source_dem, dem_res_order_1=5, dem_res_order_2=0.5):
+        """
+        Make a very detailled pandas.series (a 'line' of a dataset)
+        The dem_res_order_1 refers to the size of dem pixels which will be used to compute variables such as the cardinal point of the rock glacier
+        order_2 will be used for variables such as the mean slope in the margins, asking for a more fine-grain dem.
+        """
+
+        # If we don't have 2 outlines we skip the rock glacier
+        if not self.extended_outlines_loaded() and not self.restricted_outlines_loaded():
+            return None
+
+        # 1 - Load elements that we already know from the PMS and the outlines
+        rgu_row = self.get_basic_serie()
+
+        # 2 - Read & compute the altimetric elements
+        rgu_row = self.get_alti_metrics(
+            rgu_row,
+            source_dem,
+            dem_res_order_1,
+            dem_res_order_2,
+            )
+
+        # 3 - Read things about geometry
+        rgu_row = self.get_2D_geom_indexes(rgu_row)
+
+        # 4 - Read climatic data...
+
+        # 5 - Read optical displacement field data...
+
+        # Georeferenced coordinates and geometries - in addition to oue_geom
         rgu_row['our_geom'] = self.rgu_our_geom
         rgu_row['pm_geom'] = self.pm_geom
-
-        # Upslope connection
-        rgu_row['upslope_con'] = self.rgu_upsl_con
 
         return rgu_row
