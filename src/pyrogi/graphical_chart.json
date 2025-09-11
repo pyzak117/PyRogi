@@ -1,22 +1,33 @@
 {
     "cardi_pt":{
         "N":"black",
-        "NE":"#4361EE",
-        "E":"#4895EF",
-        "SE":"#4CC9F0",
-        "S":"#F72585",
-        "SW":"#B5179E",
-        "W":"#7209B7",
-        "NW":"#3A0CA3"
+        "NE":"#4361EE99",
+        "E":"#4895EF99",
+        "SE":"#4CC9F099",
+        "S":"#F7258599",
+        "SW":"#B5179E99",
+        "W":"#7209B799",
+        "NW":"#3A0CA399"
     },
 
     "rgu_activity_class":{
-        "active":"#c90000",
-        "active_uncertain":"#cc6262",
-        "transitional":"#faa307",
-        "relict_uncertain":"#8ed4a7",
-        "relict":"#0bce51",
-        "uncertain":"#8d99ae"
+        "active":"#c9000099",
+        "active_uncertain":"#cc626299",
+        "transitional":"#faa30799",
+        "relict_uncertain":"#8ed4a799",
+        "relict":"#0bce5199",
+        "uncertain":"#8d99ae99"
+    },
+
+    "upslope_con":{
+        "talus":"#FF730099",
+        "debris-mantled_slope":"#FFE00099",
+        "landslide":"#62BF0499",
+        "glacier_forefield":"#0048FF99",
+        "glacier":"#36C8FF99",
+        "poly":"#9D45FF99",
+        "uncertain":"#B5B5B5",
+        "unknown":"#00000099"
     },
 
     "rgu_kin_att":"YlOrRd",
