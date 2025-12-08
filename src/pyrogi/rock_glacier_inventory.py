@@ -176,11 +176,12 @@ class RockGlacierInventory:
 
         # Other
         epsg=2056,
+        out_figs_dir=None,
         ):
 
         # Define attributes
         self.pms_layer = pms_layer
-        self.out_layer = out_layer
+        self.ous_layer = ous_layer
         self.epsg=epsg
 
         # ROGI_2 (raw mode)
