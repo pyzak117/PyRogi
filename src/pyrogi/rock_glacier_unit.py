@@ -1,277 +1,300 @@
+from osgeo import gdal
+import numbers
 from matplotlib import gridspec
 import contextily as cx
 from matplotlib import pyplot as plt
 import shapely
 import pandas as pd
 import geopandas as gpd
-import os
-from pathlib import Path
 import numpy as np
 from telenvi import raster_tools as rt
+from telenvi import vector_tools as vt
+from telenvi import swiss_geo_downloader as sgd
+from tqdm import tqdm
+
+# import pyinsar
+import warnings
+
+# Supprimer tous les avertissements de geopandas
+warnings.filterwarnings("ignore")
+
+def identify_feature_type(rogi_ch_feature):
+    """
+    Check if a rogi_ch_feature is a Primary Marker, an extended outline or a restricted outline
+    """
+
+    if 'polygon' in rogi_ch_feature.geometry.geom_type.lower():
+        if 'extended' in rogi_ch_feature.ou_type:
+            ft_type = 'oue'
+        if 'restricted' in rogi_ch_feature.ou_type:
+            ft_type = 'our'
+    elif 'point' in rogi_ch_feature.geometry.geom_type.lower():
+        ft_type = 'pm'
+    return ft_type
 
 class RockGlacierUnit:
 
     """
     Describe a Rock Glacier. 
     This conceptual class link all the differents
-    objects described in the RGIK Guidelines.
-
-    ------------
-    # RGIK System Attributes
-    ------------
-
-    # Primary Markers
-    rgik_id        : PrimaryID
-    rgik_morpho    : Morpho.
-    rgik_upslcon   : Upsl.Con.
-    rgik_upslcur   : Upsl.Cur.
-    rgik_complet   : Complet.
-    rgik_acticl    : Acti.Cl.
-    rgik_destab    : Destabili.
-    rgik_comment   : Comment
-    rgik_workingID : WorkingID
-    rgik_assoc_rgs : Assoc.RGS
-    rgik_acti_ass  : Acti.Ass.
-    rgik_kin_att   : Kin.Att.
-    rgik_kin_rel   : Rel.Kin.
-    rgik_kin_period: Kin.Period
-
-    # Outlines (Extended = oue, Restricted = our)
-    rgik_oue_relFr      = 0      : RelFr
-    rgik_oue_relLeftLM      = 0  : RelLeftLM
-    rgik_oue_relRightLM         = 0 : RelRightLM
-    rgik_oue_relUpsCon      = 0  : RelUpsCon
-    rgik_oue_RelIndex       = 0   : RelIndex
-    rgik_oue_Comment        = 0    : Comment
-
-    ------------
-    # RoDynAlps System Attributes
-    ------------
-    
-    rgu_id        : numerical identifier of the rock glacier unit
-    rgs_id        : numerical identifier of the rock glacier system embedding the rgu
-    rgu_operator  : initials of the operator who created the point
-    rgu_reviewer  : initials of the operator who review the point
-    rgu_colorcode : hexadecimal code for display the marker in qgis    
-    kin_velocity_value (float) : mean velocity (cm/y) 
+    objects described in the ROGI CH Model.
     """
 
-    def __init__(
-        self,
+    def __init__(self, rogi_ch_feature): 
 
-        rgik_id,
-        rgik_morpho,
-        rgik_upslcon,
-        rgik_upslcur,
-        rgik_complet,
-        rgik_acticl,
-        rgik_destab,
-        rgik_comment,
-        rgik_workingID,
-        rgik_assoc_rgs,
-        rgik_acti_ass,
-        rgik_kin_att,
-        rgik_kin_rel,
-        rgik_kin_period,
-        rgu_pm_geom,
+        """
+        Initializes a RockGlacierUnit object, dynamically creating an attribute
+        for each column in the rogi_ch geopackage
+        """
+
+        # Transform geopackage columns into attributes
+        self._set_attributes_from_rogi_ch_feature(rogi_ch_feature)
         
-        rgik_oue_relFr      = 0,
-        rgik_oue_relLeftLM  = 0,
-        rgik_oue_relRightLM = 0,
-        rgik_oue_relUpsCon  = 0,
-        rgik_oue_RelIndex   = 0,
-        rgik_oue_Comment    = '',
-        
-        rgik_our_relFr      = 0,
-        rgik_our_relLeftLM  = 0,
-        rgik_our_relRightLM = 0,
-        rgik_our_relUpsCon  = 0,
-        rgik_our_RelIndex   = 0,
-        rgik_our_Comment    = '',
+        # Rename some of the attributes
+        self.pm_geom = self.pm_geom
+        self.rgu_oue_geom  = None
+        self.rgu_our_geom  = None
+        self.rgu_margins_geom = None
+        self.pm_color  = '#CC2936'
+        self.rgu_oue_color = '#0b1d51'
+        self.rgu_our_color = '#10df7e'
+        self.rgu_dem       = None
+        self.rgu_slope     = None
+        self.rgu_aspect    = None
+        self.rgu_cardinals = None
+        self.rgu_geo_major = None
+        self.rgu_geo_minor = None
+        self.rgu_major_axis_color = 'red'
+        self.rgu_minor_axis_color = 'orange' 
+        self.rgu_epsg      = 2056
 
-        rgu_id              = 0,
-        rgu_operator        = '',
-        rgu_reviewer        = '',
-        rgu_colorcode       = '',
-        rgu_oue_geom        = '',
-        rgu_our_geom        = '',
-        rgu_epsg            = 2056,
-        rgu_major_axis_color = 'orange',
-        rgu_minor_axis_color = 'red' ):
-
-        # RGIK Conceptual Model Attributes
-        self.rgik_id             = rgik_id
-        self.rgik_morpho         = rgik_morpho
-        self.rgik_upslcon        = rgik_upslcon
-        self.rgik_upslcur        = rgik_upslcur
-        self.rgik_complet        = rgik_complet
-        self.rgik_acticl         = rgik_acticl
-        self.rgik_destab         = rgik_destab
-        self.rgik_comment        = rgik_comment
-        self.rgik_workingID      = rgik_workingID
-        self.rgik_assoc_rgs      = rgik_assoc_rgs
-        self.rgik_acti_ass       = rgik_acti_ass
-        self.rgik_kin_att        = rgik_kin_att
-        self.rgik_kin_rel        = rgik_kin_rel
-        self.rgik_kin_period     = rgik_kin_period
-
-        self.rgik_oue_relFr      = rgik_oue_relFr
-        self.rgik_oue_relLeftLM  = rgik_oue_relLeftLM
-        self.rgik_oue_relRightLM = rgik_oue_relRightLM
-        self.rgik_oue_relUpsCon  = rgik_oue_relUpsCon
-        self.rgik_oue_RelIndex   = rgik_oue_RelIndex
-        self.rgik_oue_Comment    = rgik_oue_Comment
-        
-        self.rgik_our_relFr      = rgik_our_relFr
-        self.rgik_our_relLeftLM  = rgik_our_relLeftLM
-        self.rgik_our_relRightLM = rgik_our_relRightLM
-        self.rgik_our_relUpsCon  = rgik_our_relUpsCon
-        self.rgik_our_RelIndex   = rgik_our_RelIndex
-        self.rgik_our_Comment    = rgik_our_Comment
-
-        # RoDynAlps Conceptual Model Attributes
-        self.rgu_id = rgu_id
-        self.rgu_operator = rgu_operator
-        self.rgu_reviewer = rgu_reviewer
-        self.rgu_colorcode = rgu_colorcode
-        self.rgu_pm_geom = rgu_pm_geom
-        self.rgu_oue_geom = rgu_oue_geom
-        self.rgu_our_geom = rgu_our_geom
-        self.rgu_major_axis_color = rgu_major_axis_color
-        self.rgu_minor_axis_color = rgu_minor_axis_color
-        self.rgu_epsg = rgu_epsg
-        self.rgu_dem = ''
-
-    def __repr__(self):
-        return f"""---
-Rock Glacier Unit Feature        
-RGIK Primary ID : {self.rgik_id}
-RoDynAlps ID    : {self.rgu_id}
-Outlines        : {self.get_outlines_status()}
----
+    def _set_attributes_from_rogi_ch_feature(self, rogi_ch_feature):
         """
-
-    def read_outline(self, outline_feature):
+        Dynamically set attributes based on the GeoSeries feature's columns.
+        Works with a geodataframe structured as the rogi_ch data model
         """
-        add attributes to the Rock Glacier Unit relatives to the outline feature
-        outline_feature : a pd.Series or gpd.GeoSeries
-        """
+        # Identify the type of the feature
+        ft_type = identify_feature_type(rogi_ch_feature)
+        if ft_type is None:
+            return None
 
-        # Extract the type of the outline_feature
-        outline_type = outline_feature['Out.Type']
+        # Set one attribute per column in the feature
+        for column_name, value in tqdm(rogi_ch_feature.items()):
 
-        # Extended feature : rgik_oue attributes
-        if outline_type.lower().strip() == 'extended':
-            self.rgik_oue_relFr      = outline_feature['RelFr']
-            self.rgik_oue_relLeftLM  = outline_feature['RelLeftLM']
-            self.rgik_oue_relRightLM = outline_feature['RelRightLM']
-            self.rgik_oue_relUpsCon  = outline_feature['RelUpsCon']
-            self.rgik_oue_RelIndex   = outline_feature['RelIndex']
-            self.rgik_oue_Comment    = outline_feature['Comment']
-            self.rgu_oue_geom        = outline_feature['geometry']
+            # For the primary markers            
+            if ft_type == 'pm':
 
-        # Restricted feature : rgik_our attributes
-        elif outline_type.lower().strip() == 'restricted':
-            self.rgik_our_relFr      = outline_feature['RelFr']
-            self.rgik_our_relLeftLM  = outline_feature['RelLeftLM']
-            self.rgik_our_relRightLM = outline_feature['RelRightLM']
-            self.rgik_our_relUpsCon  = outline_feature['RelUpsCon']
-            self.rgik_our_RelIndex   = outline_feature['RelIndex']
-            self.rgik_our_Comment    = outline_feature['Comment']
-            self.rgu_our_geom        = outline_feature['geometry']
-    
-        return self.rgu_oue_geom, self.rgu_our_geom
-
-    def search_outline(self, outlines_layer):
-        """
-        return the outlines containing the Rock Glacier Unit marker
-        outlines_layer : a geodataframe of outlines
-        """
-
-        # Track the outlines containing the marker feature
-        outlines_containers = outlines_layer[outlines_layer.contains(self.rgu_pm_geom)]
-
-        # Read each of the outlines (1 or 2, extended and / or restricted)
-        return [self.read_outline(outline) for outline in outlines_containers.iloc]
-
-    def get_outlines_status(self):
-        return type(self.rgu_oue_geom) != str
-
-    def get_axes(self):
-        """
-        Return 2 shapely.LineString objects, describing the major axes of the RGU extended outlines bounding box
-        """
-
-        # Get the rotated rectangle of the Extended outline
-        row_box = self.rgu_oue_geom.minimum_rotated_rectangle
-
-        # Box coords
-        corners = np.array(row_box.boundary.coords)[:-1]
-        
-        # Split X and Y corners coordinates
-        xa, xb, xc, xd = corners[:,0]
-        ya, yb, yc, yd = corners[:,1]
-        
-        # Middle Points
-        e = shapely.Point([(xa+xb)/2, (ya+yb)/2])
-        f = shapely.Point([(xc+xd)/2, (yc+yd)/2])
-        g = shapely.Point([(xa+xd)/2, (ya+yd)/2])
-        h = shapely.Point([(xb+xc)/2, (yb+yc)/2])
-
-        # Axis
-        self.rgu_major_axis = shapely.LineString([e,f])
-        self.rgu_minor_axis = shapely.LineString([g,h])
-    
-        return self.rgu_major_axis, self.rgu_minor_axis
-
-    def get_dem(self, dem_metamap='', layername='', nRes=0):
-        """
-        dem_metamap : path to a directory containing dems,
-                      path to a geopackage describing the dems maps,
-                      path to a shapefile describing the dems maps,
-                      a geodataframe describing the dems maps
-        """
-
-        # If the Rock Glacier Unit have already a rgu_dem feature
-        if self.rgu_dem != '':
-            if nRes == 0 or nRes == abs(self.rgu_dem.getPixelSize()[0]):
-                return self.rgu_dem
-            else:
-                return self.rgu_dem.resize(nRes)
-
-        # Here we check the existence of the RGU outlines - at least the extended one
-        assert type(self.rgu_oue_geom) != '', 'the rock glacier outlines are not known'
-
-        # First case : the dem_metamap is a string
-        if type(dem_metamap) == str:
-
-            # Make sure it's not empty
-            assert dem_metamap != '', 'we need metadata about the dems to open them'
+                # Geometry column
+                if column_name == 'geometry':
+                    if not value.is_valid:
+                        value = value.buffer(0)
+                    clean_att_name = 'pm_geom'
                 
-            # Here we have to open as a geopackage with the layername
-            if dem_metamap.endswith('.gpkg'):
-                if layername != '':
-                    dem_metamap = gpd.read_file(dem_metamap, layer=layername)
+                # Others columns : we keep as it is
                 else:
-                    dem_metamap = gpd.read_file(dem_metamap)
+                    clean_att_name = column_name
+            
+            # For the outlines
+            if 'ou' in ft_type:
+                if column_name == 'geometry':
+                    clean_att_name = f"rgu_{ft_type}_geom"
+                    if not value.is_valid:
+                        value = value.buffer(0)
+                else:
+                    clean_att_name = f"rgu_{ft_type}_{column_name[3:]}"
 
-            # Here we have to open as a shapefile
-            if dem_metamap.endswith('.shp'):
-                dem_metamap = gpd.read_file(dem_metamap)
+            # Set the attributes
+            setattr(self, clean_att_name, value)
 
-            # Here dem_metamap is relative to a path containing hundreds or thousands of dems
-            else:
-                dem_metamap = rt.getRastermap(dem_metamap)
+        return None
 
-        # Now we should have a metamap and we can start to work
-        assert type(dem_metamap) == gpd.GeoDataFrame, 'invalid dem_metamap'
+    def get_pm_relatives_attributes_names(self):
+        return [rgu_attr for rgu_attr in dir(self) if 'pm_' in rgu_attr and not 'get' in rgu_attr]
 
-        # Here we find the tracks intersecting the rock glacier outlines
-        rgu_demtracks = dem_metamap[dem_metamap.intersects(self.rgu_oue_geom)==True]
+    def get_oue_rel_atives_attributes_names(self):
+        return [rgu_attr for rgu_attr in dir(self) if 'oue_' in rgu_attr and not 'get' in rgu_attr]
 
-        # Here we crop each raster on the extent of the extended outline
-        if nRes == 0:
-            rgu_dems = [rt.Open(demtrack.filepath, load_pixels=False, geoExtent=self.rgu_oue_geom) for demtrack in rgu_demtracks.iloc]
+    def get_our_rel_atives_attributes_names(self):
+        return [rgu_attr for rgu_attr in dir(self) if 'our_' in rgu_attr and not 'get' in rgu_attr]
+
+    def smashed_in_serie(self):
+        """
+        Send a pandas.Series object. with all the attributes. 
+        The column 'geometry' is set from the extended outlines
+        """
+
+        # Check availibility of the outlines
+        assert self.extended_outlines_loaded(), 'nothing to smash because no outlines'
+
+        # Create empty serie
+        rgu_row = pd.Series(dtype='object')
+
+        # Add Primary Markers attributes
+        for rgu_attr_name in self.get_pm_relatives_attributes_names():
+            rgu_row[rgu_attr_name] = getattr(self, rgu_attr_name)
+        
+        # Add restricted outlines attributes
+        for rgu_attr_name in self.get_our_rel_atives_attributes_names():
+            rgu_row[rgu_attr_name] = getattr(self, rgu_attr_name) 
+        
+        # Add extended outlines attributes
+        for rgu_attr_name in self.get_oue_rel_atives_attributes_names():
+            rgu_row[rgu_attr_name] = getattr(self, rgu_attr_name)
+
+            # Add explicit geometry column
+            rgu_row["geometry"] = self.rgu_oue_geom
+
+        return rgu_row
+
+    def get_series(self):
+        """
+        Send a list of pandas.Series objects. 
+        At least you have one row for the pm_relatives attributes. 
+        And if the outlines are loaded, you have 3 rows, for pm, oue and our.
+        """
+
+        # Create empty pandas rows or series
+        pm_row, oue_row, our_row = (pd.Series(dtype='object'), None, None)
+
+        # Initialize columns and values for each columns from the instance's attributes
+        for rgu_attr_name in self.get_pm_relatives_attributes_names():
+            pm_row[rgu_attr_name] = getattr(self, rgu_attr_name)
+
+        # Change the name of the geometry to easily build geodataframes with this serie
+        pm_row["geometry"] = pm_row["pm_geom"]
+
+        # Now same job for the outlines
+        if self.extended_outlines_loaded():
+
+            # Extended
+            oue_row = pd.Series(dtype='object')
+            for rgu_attr_name in self.get_oue_rel_atives_attributes_names():
+                oue_row[rgu_attr_name] = getattr(self, rgu_attr_name)
+        
+            # Add explicit geometry column
+            oue_row["geometry"] = oue_row["rgu_oue_geom"]
+
+            # Add a column to have the name
+            oue_row["Out.Type"] = 'Extended'
+
+            # Restricted
+            our_row = pd.Series(dtype='object')
+            for rgu_attr_name in self.get_our_rel_atives_attributes_names():
+                our_row[rgu_attr_name] = getattr(self, rgu_attr_name) 
+            our_row["geometry"] = our_row["rgu_our_geom"]
+            our_row["Out.Type"] = 'Restricted'
+        
+        return pm_row, oue_row, our_row
+
+    def get_buffer_around_marker(self, buffer_width=200):
+        return self.pm_geom.buffer(buffer_width).envelope
+        
+    def get_most_representative_polygon(self, buffer_width=200):
+        """
+        Return either extended outline if available or a squared buffer around the primary marker 
+        """
+        if self.rgu_oue_geom is not None : 
+            aoi = self.rgu_oue_geom
+        else:
+            aoi = self.get_buffer_around_marker(buffer_width)
+        return aoi
+
+    def load_outlines(self, outlines_layer):
+        """
+        return Rock Glacier Unit outlines if availables
+        """
+
+        # Search the oulines containing the primary marker
+        outlines_features = outlines_layer[outlines_layer.contains(self.pm_geom)]
+        outlines_features = outlines_features.dropna(subset='ou_type')
+
+        # Get the attributes of each outlines into the RGU feature
+        [self._set_attributes_from_rogi_ch_feature(outline) for outline in outlines_features.iloc]
+        
+        try:
+            if self.rgu_our_geom is None:
+                self.rgu_our_geom = self.rgu_oue_geom
+            elif self.rgu_oue_geom is None:
+                self.rgu_oue_geom = self.rgu_our_geom
+            return self.rgu_oue_geom, self.rgu_our_geom
+
+        except AttributeError:
+            return None, None
+
+    def extended_outlines_loaded(self):
+        return self.rgu_oue_geom is not None
+    
+    def restricted_outlines_loaded(self):
+        return self.rgu_our_geom is not None
+
+    def make_ous_geoms_valids(self):
+        if self.extended_outlines_loaded():
+            self.rgu_oue_geom = shapely.make_valid(self.rgu_oue_geom)
+        if self.restricted_outlines_loaded():
+            self.rgu_our_geom = shapely.make_valid(self.rgu_our_geom)
+                           
+    def read_raster_on_rgu(self, 
+            target_source   : str | gpd.GeoDataFrame | rt.geoim.Geoim,  
+            layername       : str ='',  
+            nRes            : numbers.Real = None, 
+            buffer_width    : numbers.Real = 500, 
+            load_pixels     : bool = False):
+        """
+        Open any raster or set of rasters on the extent of the rock glacier
+        Caution : the epsg have to be the same for the raster and for the rgu
+
+        target_source : a string to a raster or to a raster dir or a geodataframe
+        layername     : to access the good layer if target_source is a path to a geopackage
+        """
+
+        # Get the extent of the Rock Glacier Unit
+        aoi = self.get_most_representative_polygon(buffer_width)
+
+        # Load the raster or rasters on this extent, with resampling if needed
+        if type(target_source) is not rt.geoim.Geoim:
+            target = rt.OpenFromMultipleTargets(
+                target_source = target_source, 
+                layername = layername, 
+                area_of_interest = aoi, 
+                nRes = nRes, 
+                load_pixels=load_pixels)
+        else:
+            target = rt.Open(
+                target_source, 
+                geoExtent = aoi, 
+                nRes = nRes, 
+                load_pixels=load_pixels) 
+        
+        return target
+
+    def initialize_dem(self,
+        dem_source  : str | gpd.GeoDataFrame | rt.geoim.Geoim,  
+        layername   : str ='', 
+        nRes        : numbers.Real = None, 
+        buffer_width: numbers.Real = 200,
+        verbose=True) -> gdal.Dataset:
+        """
+        Open any DEM or set of DEMS on the extent of the rock glacier
+        target_source : a string to a DEM or to a DEM dir or a geodataframe with metadata of the DEMS
+        layername     : to access the good layer if target_source is a path to a geopackage  
+        buffer_width  : open the DEM outside of the rg extent, but on a larger squared area of width corresponding to buffer_width argument
+        """
+        if not self.extended_outlines_loaded():
+            if verbose:
+                print(f'outlines not loaded, dem only around primary marker with {buffer_width}m buffer around')
+        self.rgu_dem = self.read_raster_on_rgu(dem_source, layername, nRes, buffer_width, load_pixels=False)
+        return self.rgu_dem
+
+    def get_dem(self):
+
+        # Make sure the DEM is initialized on the RGU
+        assert self.rgu_dem is not None, 'dem not initialized'
+
+        # If it's already loaded we just return it
+        if type(self.rgu_dem) == rt.geoim.Geoim:
+            return self.rgu_dem
+
+        # Else we load it
         else:
             rgu_dems = [rt.Open(demtrack.filepath, load_pixels=False, geoExtent=self.rgu_oue_geom, nRes=nRes) for demtrack in rgu_demtracks.iloc]
 
@@ -297,27 +320,52 @@ Outlines        : {self.get_outlines_status()}
         major_profile = np.array(dem.inspectGeoLine(self.rgu_major_axis))
         minor_profile = np.array(dem.inspectGeoLine(self.rgu_minor_axis))
         return major_profile, minor_profile
+
+    def get_topo_profiles(self, window_size=1):
+        """
+        Extract topographic profiles along the 2 geoaxes of the RGU feature
+        """
+        dem = self.get_dem()
+        topo_major_profile, topo_minor_profile = self.get_raster_values_on_geo_segments(dem, window_size)
+        return topo_major_profile, topo_minor_profile
+
+    def get_slope_profiles(self, window_size=1):
+        """
+        Extract topographic profiles along the 2 geoaxes of the RGU feature
+        """
+        slope = self.get_slope()
+        slope_major_profile, slope_minor_profile = self.get_raster_values_on_geo_segments(slope, window_size)
+        return slope_major_profile, slope_minor_profile
+
+    def load_mas(self, mas_layer):
+        """
+        create new instance attributes :
+            rgu_oue_ma and rgu_our_ma, de type pd df
+            (eventuellement d'autres, pour lire directement l'attribut cinématique depuis celui de la moving-area)            
+        """
+
+        # Clip du layer de moving areas sur le glacier rocheux
+        self.rgu_oue_mas = mas_layer.clip(self.rgu_oue_geom)
+        self.rgu_our_mas = mas_layer.clip(self.rgu_our_geom)
         
-    def get_relative_topo_profiles(self, window_size=1):
+        return (self.rgu_oue_mas, self.rgu_our_mas)
 
-        # Main axes
-        major, minor = self.get_topo_profiles()
+    def close_dem(self):
+        """
+        Delete from memory the dem and the slope, which are 2 heavy objects
+        """
+        del self.rgu_dem
+        return None
 
-        # Normalize the elevation from the lowest point
-        rel_major = np.array(major) - major.min()
-        rel_minor = np.array(minor) - minor.min()
-
-        # Build a convolutionnal kernel
-        kernel = np.ones(window_size) / window_size
-
-        # 
-        rel_major_new = np.convolve(rel_major, kernel)
-
-        rel_minor_new = np.convolve(rel_minor, kernel)
-
-        return rel_major_new, rel_minor_new
-
-    def show_map(self, ax='', basemap=False):
+    def close_slope(self):
+        del self.rgu_slope
+        return None
+        
+    def close_aspect(self):
+        del self.rgu_aspect
+        return None
+        
+    def show_map(self, ax='', basemap=False, markersize=20, show_coordinates=False, buffersize=250, draw_vertexes=True):
 
         # Define an empty ax if not provided
         if ax == '':
@@ -394,96 +442,412 @@ Outlines        : {self.get_outlines_status()}
 
         # What's for ?
         plt.tight_layout()
+
+        return fig
+
+    def get_points_cloud(self, z_factor=1):
+
+        # Get the RGU DEM
+        dem = self.get_dem()
+        # dem.maskFromVector(self.rgu_oue_geom, epsg=2056)
+
+        # Apply a exageration on it
+        dem *= z_factor
+        dem_array = dem.array
+
+        # Generate corresponding x and y coordinates
+        # Assuming the spatial resolution (cell size) of the DEM is known
+        cell_size = dem.getPixelSize()[0]
+        height, width = dem_array.shape
+        y, x = np.mgrid[0:height, 0:width] * cell_size
+
+        # Optionally, adjust x and y if you have specific origin coordinates
+        x_origin, y_origin = dem.getOrigin()
+        x += x_origin
+        y += y_origin
+
+        # Flatten the x, y, and dem_array to create a list of points
+        points = np.vstack((x.flatten(), y.flatten(), dem_array.flatten())).T
+        return points
+
+    def show_points_cloud(self, z_factor=1, cmap='plasma', point_size=1.5):
+        import pyvista as pv
+
+        points = self.get_points_cloud(z_factor=z_factor)
+
+        # Convert the points array into a PyVista PolyData object
+        cloud = pv.PolyData(points)
         
-    def write_rgik_pm(self):
+        # Add elevation as a scalar value for coloring
+        cloud["elevation"] = points[:, 2]
+        
+        # Plot the point cloud with elevation colormap
+        p = pv.Plotter()
+        p.add_mesh(
+            cloud, scalars="elevation", cmap=cmap, point_size=point_size)
+        p.view_isometric()
+
+        p.set_background('black')
+        p.add_axes()
+
+    def get_activity(self):
+        return self.rgu_activity_class
+
+    def get_alti_pm(self):
+        dem = self.get_dem()
+        return dem.inspectGeoPoint(self.pm_geom)
+
+    def get_alti_ranges(self, out_type = 'extended'):
         """
-        Return a pd.Series ready to be saved in a geopackage or a shapefile, 
-        containing the infos of the Rock Glacier Unit Primary Markers
-        """            
-
-        pm_row = pd.Series(dtype='object')
-        pm_row['PrimaryID'] = self.rgik_id
-        pm_row['Morpho.'] = self.rgik_morpho
-        pm_row['Upsl.Con.'] = self.rgik_upslcon
-        pm_row['Upsl.Cur.'] = self.rgik_upslcur
-        pm_row['Complet.'] = self.rgik_complet
-        pm_row['Acti.Cl.'] = self.rgik_acticl
-        pm_row['Destabili.'] = self.rgik_destab
-        pm_row['Comment'] = self.rgik_comment
-        pm_row['WorkingID'] = self.rgik_workingID
-        pm_row['Assoc.RGS'] = self.rgik_assoc_rgs
-        pm_row['Acti.Ass.'] = self.rgik_acti_ass
-        pm_row['Kin.Att.'] = self.rgik_kin_att
-        pm_row['Rel.Kin.'] = self.rgik_kin_rel
-        pm_row['Kin.Period'] = self.rgik_kin_period
-        pm_row['geometry'] = self.rgu_pm_geom
-        return pm_row
-
-    def write_outlines(self, model='rgik'):
+        Return alti min and max of extended outline (default) or restricted
         """
-        Return 2 pd.Series ready to be saved in a geopackage or a shapefile, 
-        containing the infos of the Rock Glacier Unit outlines 
+        dem = self.get_dem()
+
+        # Process for Extended outline
+        if out_type.lower()[0]=='e':
+            dem.maskFromVector(self.rgu_oue_geom, epsg=2056)
+
+        # Same for Restricted
+        else:
+            dem.maskFromVector(self.rgu_our_geom, epsg=2056)
+
+        res = np.array((ma.min(dem.array[dem.array > 0]), ma.max(dem.array[dem.array > 0])))
+        dem.unmask()
+        return res
+
+    def get_alti_med_mean(self, out_type = 'extended'):
+        """
+        Return alti min and max of extended outline (default) or restricted
+        """
+        dem = self.get_dem()
+
+        # Process for Extended outline
+        if out_type.lower()[0] == 'e':
+            dem.maskFromVector(self.rgu_oue_geom, epsg=2056)
+
+        # Same for Restricted
+        else:
+            dem.maskFromVector(self.rgu_our_geom, epsg=2056)
+
+        res = ma.median(dem.array[dem.array > 0]), ma.mean(dem.array[dem.array > 0])
+        dem.unmask()
+        return res
+
+    def get_slope_pm(self):
+        slope = self.get_slope()
+        return slope.inspectGeoPoint(self.pm_geom)
+
+    def get_slope_ranges(self, out_type = 'extended'):
+        """
+        Return slope min and max of extended outline (default) or restricted
+        """
+        slope = self.get_slope()
+
+        # Process for Extended outline
+        if out_type.lower()[0] == 'e':
+            if self.rgu_oue_geom is not None:
+                slope.maskFromVector(self.rgu_oue_geom, epsg=2056)
+            else:
+                return None
+
+        # Same for Restricted
+        else:
+            if self.rgu_our_geom is not None:
+                slope.maskFromVector(self.rgu_our_geom, epsg=2056)
+
+        res = np.array((ma.min(slope.array[slope.array > 0]), ma.max(slope.array[slope.array > 0])))
+        slope.unmask()
+        return res
+        
+    def get_slope_med_mean(self, out_type = 'extended'):
+        """
+        Return slope min and max of extended outline (default) or restricted
+        """
+        slope = self.get_slope()
+
+        # Process for Extended outline
+        if out_type.lower()[0] == 'e':
+            if self.rgu_oue_geom is not None:
+                slope.maskFromVector(self.rgu_oue_geom, epsg=2056)
+            else:
+                return None
+
+        # Same for Restricted
+        else:
+            if self.rgu_our_geom is not None:
+                slope.maskFromVector(self.rgu_our_geom, epsg=2056)
+            else:
+                return None
+        res = ma.median(slope.array), ma.mean(slope.array)
+        slope.unmask()
+        return res
+
+    def load_margins(self):
+        """
+        Return geometry only between the restricted and extended outlines
+        """
+        if self.extended_outlines_loaded() and self.restricted_outlines_loaded():
+            self.make_ous_geoms_valids()
+            self.rgu_margins_geom = self.rgu_oue_geom - self.rgu_our_geom
+        
+    def get_slope_stats_margins(self):
+        """
+        Return min, max, med, mean slope values only between the restricted and extended outlines
+        """
+        if self.extended_outlines_loaded() and self.restricted_outlines_loaded():
+            slope = self.get_slope()
+            slope.maskFromVector(self.rgu_margins_geom, epsg=self.rgu_epsg)
+            res = (ma.min(slope.array), ma.max(slope.array), slope.median(), slope.mean())
+            slope.unmask()
+            return res
+        else:
+            return (None, None, None, None)
+        
+    def get_cardinal_point(self, out_type='extended'):
+        """
+        Get one cardinal point per dem pixel inside the outline
+        and return the most redundant value 
+        """
+        cardis = self.get_cardinals().copy()
+
+        # Process for Extended outline
+        if out_type.lower()[0] == 'e':
+            if self.rgu_oue_geom is not None:
+                cardis.maskFromVector(self.rgu_oue_geom, epsg=2056)
+            else:
+                return None
+
+        # Same for Restricted
+        else:
+            if self.rgu_our_geom is not None:
+                cardis.maskFromVector(self.rgu_our_geom, epsg=2056)
+
+        cardinals_letters = {-1:'unknown', 1:'N', 2:'NE', 3:'E', 4:'SE', 5:'S', 6:'SW', 7:'W', 8:'NW'}
+        return cardinals_letters[round(cardis.median())]
+
+    def get_lengths(self, out_type='extended'):
+        """
+        Return the length of minor and major segments
         """
 
-        match model.lower():
+        # Process for Extended outline
+        if out_type.lower()[0] == 'e':
+            if self.rgu_oue_geom is not None:
+                target_geom = self.rgu_oue_geom
+            else:
+                return None
 
-            # Write the outlines with the RGIK conceptual model attributes
-            case 'rgik':
-                oue_row = pd.Series(dtype='object')
-                oue_row['Out.Type']   = 'Extended'
-                oue_row['PrimaryID'] = self.rgik_id
-                oue_row['WorkingID'] = self.rgik_workingID
-                oue_row['RelFr']      = self.rgik_oue_relFr
-                oue_row['RelLeftLM']  = self.rgik_oue_relLeftLM
-                oue_row['RelRightLM'] = self.rgik_oue_relRightLM
-                oue_row['RelUpsCon']  = self.rgik_oue_relUpsCon
-                oue_row['RelIndex']   = self.rgik_oue_RelIndex
-                oue_row['Comment']    = self.rgik_oue_Comment
-                oue_row['geometry']   = self.rgu_oue_geom
+        # Same for Restricted
+        else:
+            if self.rgu_our_geom is not None:
+                target_geom = self.rgu_our_geom
 
-                our_row = pd.Series(dtype='object')
-                our_row['Out.Type']   = 'Restricted'
-                our_row['PrimaryID'] = self.rgik_id
-                our_row['WorkingID'] = self.rgik_workingID
-                our_row['RelFr']      = self.rgik_our_relFr
-                our_row['RelLeftLM']  = self.rgik_our_relLeftLM
-                our_row['RelRightLM'] = self.rgik_our_relRightLM
-                our_row['RelUpsCon']  = self.rgik_our_relUpsCon
-                our_row['RelIndex']   = self.rgik_our_RelIndex
-                our_row['Comment']    = self.rgik_our_Comment
-                our_row['geometry']   = self.rgu_our_geom
+        # Make a bounding box
+        ax_a, ax_b = vt.getMainAxes(target_geom)
+        len_a, len_b = shapely.length(ax_a), shapely.length(ax_b)
+        len_min = np.min((len_a, len_b))
+        len_max = np.max((len_a, len_b))
+        return len_min, len_max
+        
+    def get_elongated_ratio(self, out_type='extended'):
+        """
+        Compute the ratio between the 2 main axes of the outline bounding box
+        """
+        len_min, len_max = self.get_lengths(out_type)
+        return np.round(len_min / len_max * 100)
 
-            # TODO : Create a RoDynAlps outlines conceptual model attributes - 
-            # In clear, it is what we want for the project in our shapefiles
-            case 'rodynalps':
-                pass
+    def get_swimage(self, local_repository, acq_year=None, nRes=None, load_pixels=False):
+        """
+        Get list of geoims representing aerial images of the rock glacier. 
+        If the image is not existing in local_repository, download the image.
+        """
 
-        return oue_row, our_row
+        # Download and / or identify the images intersecting the rock glacier
+        target_tiles = sgd.get_swimages(
+            dest_repo=local_repository,
+            study_area_source=self.get_most_representative_polygon(buffer_width=1500),
+            acq_year=acq_year,
+            verbose=True)
 
-def read_rgik_feature(pm, oux='', oue='', rgu_epsg=0):
+        # Rename the column just to be coherent with rt.OpenMultipleTargets
+        # target_tiles = target_tiles.rename({'dest_filepath':'filepath'}, axis=1)        
 
-    # Primary Markers Data
-    rgu = RockGlacierUnit(
-            rgik_id         = pm['PrimaryID'],
-            rgik_morpho     = pm['Morpho.'],
-            rgik_upslcon    = pm['Upsl.Con.'],
-            rgik_upslcur    = pm['Upsl.Cur.'],
-            rgik_complet    = pm['Complet.'],
-            rgik_acticl     = pm['Acti.Cl.'],
-            rgik_destab     = pm['Destabili.'],
-            rgik_comment    = pm['Comment'],
-            rgik_workingID  = pm['WorkingID'],
-            rgik_assoc_rgs  = pm['Assoc.RGS'],
-            rgik_acti_ass   = pm['Acti.Ass.'],
-            rgik_kin_att    = pm['Kin.Att.'],
-            rgik_kin_rel    = pm['Rel.Kin.'],
-            rgik_kin_period = pm['Kin.Period'],
-            rgu_pm_geom     = pm['geometry'],
-            rgu_id          = pm['WorkingID'],
-            rgu_epsg        = rgu_epsg)
+        # Assume there is only one aerial campaign per year on the rock glacier
+        # ds_per_year = []
+        # for year in target_tiles.acq_year.unique():
+        #     target_year_tiles = target_tiles[target_tiles.acq_year == year]
+        #     ds = rt.OpenFromMultipleTargets(
+        #         target_year_tiles,
+        #         area_of_interest=self.get_most_representative_polygon(buffer_width=1500).buffer(500),
+        #         load_pixels=load_pixels,
+        #         nRes=nRes)
+        #     ds_per_year.append(ds)
 
-    for out_ft in [oux, oue]:
-        if type(out_ft) != str:
-            rgu.read_outline(out_ft)
+        return target_tiles
 
-    return rgu
+    def get_basic_serie(self, rgu_row=None):
+        """
+        Transfer the feature into a pandas serie or gpd.geoserie with the mandatory attributes
+        """
+
+        # Check the availibility of geometry
+        if not self.extended_outlines_loaded() and not self.restricted_outlines_loaded():
+            return None
+
+        # Create a pandas serie
+        if rgu_row is None:
+            rgu_row = pd.Series(dtype='object')
+
+        # PM Metadata
+        rgu_row['pm_pid'] = self.pm_pid
+        rgu_row['pm_working_id'] = self.pm_working_id
+        rgu_row['pm_alter_id'] = self.pm_alter_id
+        rgu_row['pm_comment'] = self.pm_comment
+
+        # Morphology
+        rgu_row['rgu_morphology'] = self.rgu_morphology
+        rgu_row['rgu_complete'] = self.rgu_complete
+
+        # RGS
+        rgu_row['rgu_rgs_type'] = self.rgu_rgs_type
+
+        # Upslope connection
+        rgu_row['rgu_upsl_cur'] = self.rgu_upsl_cur
+        rgu_row['upslope_con'] = self.rgu_upsl_con
+
+        # Activity
+        rgu_row['rgu_activity_assessment'] = self.rgu_activity_assessment
+        rgu_row['rgu_activity_class'] = self.get_activity()
+        rgu_row['rgu_destabilized'] = self.rgu_destabilized
+
+        # Kinematics
+        rgu_row['rgu_kin_att'] = self.rgu_kin_att
+        rgu_row['rgu_kin_radar'] = self.rgu_kin_radar
+        rgu_row['rgu_kin_optical'] = self.rgu_kin_optical
+
+        # 2D geometry
+        rgu_row['len_min_our'], rgu_row['len_max_our'] = self.get_lengths('r')
+        rgu_row['surf_our_ha'] = self.rgu_our_geom.area / 10000
+        rgu_row['elongated_our_ratio'] = self.get_elongated_ratio('r')
+
+        rgu_row['len_min_oue'], rgu_row['len_max_oue'] = self.get_lengths('e')
+        rgu_row['elongated_oue_ratio'] = self.get_elongated_ratio('e')
+        rgu_row['surf_oue_ha'] = self.rgu_oue_geom.area / 10000
+
+        # Load the margins and compute a few stats on it
+        self.load_margins()
+        if self.rgu_oue_geom != self.rgu_our_geom:
+            rgu_row['surf_margins'] = self.rgu_margins_geom.area / 10000
+        else:
+            rgu_row['surf_margins'] = 0
+
+        rgu_row['oue_geom'] = self.rgu_oue_geom
+        rgu_row['our_geom'] = self.rgu_our_geom
+        rgu_row['pm_geom'] = self.pm_geom
+
+        return rgu_row
+
+    def get_alti_metrics(
+        self, 
+        rgu_row,
+        source_dem, 
+        dem_res_order_1=5, 
+        dem_res_order_2=0.5,
+        only_order_1=False
+        ):
+
+        """
+        Read the DEMs and compute different metrics within the feature.
+        The dem_res_order_1 refers to the size of dem pixels which will be used to compute variables such as the cardinal point of the rock glacier
+        order_2 will be used for variables such as the mean slope in the margins, asking for a more fine-grain dem.
+        """
+        
+        # Create new polygons for the rock glacier margins, between ext and rest outlines
+        self.load_margins()
+
+        # Load DEM with resolution order 1
+        self.initialize_dem(source_dem, nRes=dem_res_order_1)
+
+        # Compute rough topo indexes
+        rgu_row['cardi_pt'] = self.get_cardinal_point()
+        rgu_row['alti_oue_min'], rgu_row['alti_oue_max'] = self.get_alti_ranges('e')
+        rgu_row['alti_our_min'], rgu_row['alti_our_max'] = self.get_alti_ranges('r')
+        rgu_row['alti_oue_med'], rgu_row['alti_oue_mean'] = self.get_alti_med_mean('e')
+        rgu_row['alti_our_med'], rgu_row['alti_our_mean'] = self.get_alti_med_mean('r')
+        rgu_row['alti_pm'] = self.get_alti_pm()
+
+        rgu_row['slope_oue_min'], rgu_row['slope_oue_max'] = self.get_slope_ranges('e')
+        rgu_row['slope_oue_med'], rgu_row['slope_oue_mean'] = self.get_slope_med_mean('e')    
+        rgu_row['slope_our_med'], rgu_row['slope_our_mean'] = self.get_slope_med_mean('r')
+        rgu_row['slope_our_min'], rgu_row['slope_our_max'] = self.get_slope_ranges('r')
+
+        # Reload the dem with the 2nd order
+        if only_order_1:
+            rgu_row['slope_marg_min'], rgu_row['slope_marg_max'], rgu_row['slope_marg_med'], rgu_row['slope_marg_mean'] = [0, 0, 0, 0]
+        else:
+            del self.rgu_dem
+            del self.rgu_slope
+            self.rgu_dem = None
+            self.rgu_slope = None
+            self.initialize_dem(source_dem, nRes=dem_res_order_2)
+
+            # Compute detailled topo indexes
+            rgu_row['slope_marg_min'], rgu_row['slope_marg_max'], rgu_row['slope_marg_med'], rgu_row['slope_marg_mean'] = self.get_slope_stats_margins()
+
+        return rgu_row
+
+    def get_2D_geom_indexes(self, rgu_row):
+        """
+        Detailled elements regarding the polygons geometry
+        """
+        # Detailled elements regarding the geometry
+        rgu_row['len_min_our'], rgu_row['len_max_our'] = self.get_lengths('r')
+        rgu_row['surf_our_ha'] = self.rgu_our_geom.area / 10000
+        rgu_row['elongated_our_ratio'] = self.get_elongated_ratio('r')
+
+        rgu_row['len_min_oue'], rgu_row['len_max_oue'] = self.get_lengths('e')
+        rgu_row['elongated_oue_ratio'] = self.get_elongated_ratio('e')
+        rgu_row['surf_oue_ha'] = self.rgu_oue_geom.area / 10000
+
+        if self.rgu_oue_geom != self.rgu_our_geom:
+            rgu_row['surf_margins'] = self.rgu_margins_geom.area / 10000
+        else:
+            rgu_row['surf_margins'] = 0
+
+        return rgu_row
+
+    def get_detailled_serie(self, source_dem, dem_res_order_1=5, dem_res_order_2=0.5, only_order_1=False):
+        """
+        Make a very detailled pandas.series (a 'line' of a dataset)
+        The dem_res_order_1 refers to the size of dem pixels which will be used to compute variables such as the cardinal point of the rock glacier
+        order_2 will be used for variables such as the mean slope in the margins, asking for a more fine-grain dem.
+        """
+
+        # If we don't have 2 outlines we skip the rock glacier
+        if not self.extended_outlines_loaded() and not self.restricted_outlines_loaded():
+            return None
+
+        # 1 - Load elements that we already know from the PMS and the outlines
+        rgu_row = self.get_basic_serie()
+
+        # 2 - Read & compute the altimetric elements
+        rgu_row = self.get_alti_metrics(
+            rgu_row,
+            source_dem,
+            dem_res_order_1,
+            dem_res_order_2,
+            only_order_1=only_order_1
+            )
+
+        # 3 - Read things about geometry
+        rgu_row = self.get_2D_geom_indexes(rgu_row)
+
+        # 4 - Read climatic data...
+
+        # 5 - Read optical displacement field data...
+
+        # Georeferenced coordinates and geometries - in addition to oue_geom
+        rgu_row['our_geom'] = self.rgu_our_geom
+        rgu_row['pm_geom'] = self.pm_geom
+
+        return rgu_row

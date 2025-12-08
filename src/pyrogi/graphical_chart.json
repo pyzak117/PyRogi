@@ -1,0 +1,41 @@
+{
+    "cardi_pt":{
+        "N":"black",
+        "NE":"#4361EE",
+        "E":"#4895EF",
+        "SE":"#4CC9F0",
+        "S":"#F72585",
+        "SW":"#B5179E",
+        "W":"#7209B7",
+        "NW":"#3A0CA3"
+    },
+
+    "rgu_activity_class":{
+        "active":"#c90000",
+        "active_uncertain":"#cc6262",
+        "transitional":"#faa307",
+        "relict_uncertain":"#8ed4a7",
+        "relict":"#0bce51",
+        "uncertain":"#A2A7A6"
+    },
+
+    "upslope_con":{
+        "talus":"#FF7300",
+        "debris-mantled_slope":"#FFE000",
+        "landslide":"#62BF04",
+        "glacier_forefield":"#0048FF",
+        "glacier":"#36C8FF",
+        "poly":"#9D45FF",
+        "uncertain":"#B5B5B5",
+        "unknown":"#000000",
+        "other":"grey"
+    },
+
+    "status":{
+        "intact":"#C70000",
+        "relict":"#0EB3E6"
+    },
+
+    "rgu_kin_att":"YlOrRd",
+    "rgu_kin_att_order":["inf_cm", "cm", "cm_to_dm", "dm", "dm_to_m","m", "sup_m", "undefined"]
+}
