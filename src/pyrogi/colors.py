@@ -58,7 +58,6 @@ rgu_kin_att_palette = color_palette(tuple(foo))
 # Cmap object
 rgu_kin_att_cmap = ListedColormap(rgu_kin_att_palette)
 
-
 def get_intensity_cmap(hex_color: str, name: str | None = None, n: int = 256):
     """
     Create a white→hex_color intensity colormap.

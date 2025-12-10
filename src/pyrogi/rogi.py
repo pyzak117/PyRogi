@@ -1,9 +1,11 @@
+# Standard Libs
 import json
 import warnings
 from pathlib import Path
 from copy import deepcopy
 from datetime import datetime
 
+# Stats & Number libs
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
@@ -12,69 +14,33 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix
 from random import randint, choice
 
+# Viz libs
+from tqdm import tqdm
 import seaborn as sns
 from matplotlib.patches import Patch
 from matplotlib import pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
 
+# Geo libs
 import geopandas as gpd
 
+# Silent some warnings
+warnings.filterwarnings("ignore", category=UserWarning, message="pkg_resources is deprecated as an API")
 from telenvi import vector_tools as vt
 from telenvi import raster_tools as rt
-rt.VERBOSE=False
 from telenvi import aida
+rt.VERBOSE=False
 
-from pyrogi.rock_glacier_unit import RockGlacierUnit
+# Pyrogi other components
+from pyrogi.rgu import RockGlacierUnit
 import pyrogi.colors as rgc
-
-from tqdm import tqdm
-
-
-warnings.filterwarnings("ignore", category=UserWarning)
-
-TEMP_FIGS_DIR = '/home/duvanelt/Desktop/'
-DATAMAP_PATH = '/home/duvanelt/datamap.json'
-
-# Define dictionnary for full variable names
-human_keys = {
-    'rgu_activity_class_wu':'Rock Glacier Activity',
-    'rgu_activity_class':'Rock Glacier Activity',
-    
-    'upslope_con':'Rock Glacier Upslope Connection',
-    
-    'alti_oue_min':'Rock Glacier Front Elevation (m a.s.l.)',
-    'alti_oue_max':'Rock Glacier Roots Elevation (m a.s.l.)',
-    'alti_oue_mean':'Rock Glacier Mean Elevation (m a.s.l.)',
-    'alti_oue_med': 'Rock Glacier Median Elevation (m a.s.l.)',
-    
-    'slope_our_med':'Rock Glacier Surface Median Steepness (°)',
-    
-    'rgu_kin_att': 'Rock Glacier Kinematic Attribute (annual semi order of magnitude)',
-    'cardi_pt':'Rock Glacier Main Orientation',
-    
-    'surf_oue_ha':'Rock Glacier Extended surface (hectares)',
-    'surf_our_ha':'Rock Glacier Restricted surface (hectares)',
-    
-    'len_min_our':'Rock Glacier Restricted Width',
-    'len_max_our':'Rock Glacier Restricted Length',
-    'rgu_dird':'Mean Direct Insolation in Summer (kJ/m²/day)',
-    'rgu_dir_ins':'Mean Direct Insolation in Summer (kJ/m²)',
-    'rgu_dir_ins_daily':'Mean Direct Insolation in Summer (kJ/m²/day)',
-    'rgu_rnorm':'Mean Annual Precipitation (mm/year) (RNORMY9120)',
-    'rgu_tnorm':'Mean Annual Air Temperature (°C) (TNORMY9120)',
-
-    'status':'Rock Glacier Status'
-}
-
-# Open DATAMAP
-with open(DATAMAP_PATH) as f:
-    DATAMAP = json.load(f)[0]
+from pyrogi.__init__ import datamap, temp_figs_dir
 
 # Open the study area
-ROGI_REGIONS_LAYER = gpd.read_file(DATAMAP['auxiliaires_path'], layer=DATAMAP['rogi_regions_layername'])
+ROGI_REGIONS_LAYER = gpd.read_file(datamap['auxiliaires_path'], layer=datamap['rogi_regions_layername'])
 
-def Open(aoi_name, meta_figs_dir=TEMP_FIGS_DIR, load_external_datasets=True, aoi_rasters_res=20, **kwargs):
+def Open(aoi_name, meta_figs_dir=temp_figs_dir, load_external_datasets=True, aoi_rasters_res=20, **kwargs):
 
     # Only arguments to change
     figs_dir = f'{meta_figs_dir}_{aoi_name}'
@@ -83,7 +49,7 @@ def Open(aoi_name, meta_figs_dir=TEMP_FIGS_DIR, load_external_datasets=True, aoi
     aoi = ROGI_REGIONS_LAYER[ROGI_REGIONS_LAYER.rogi_reg_name == aoi_name]
 
     # Open the whole rogi enhanced with altitudinal data
-    rgdf = gpd.read_file(DATAMAP['rogi_ch_3'], layer=f'rogi_ch_3_{aoi_name}')
+    rgdf = gpd.read_file(datamap['rogi_ch_3'], layer=f'rogi_ch_3_{aoi_name}')
 
     # Create the RockGlacierInventory instance
     rogi_instance = RockGlacierInventory(
@@ -103,6 +69,7 @@ def Open(aoi_name, meta_figs_dir=TEMP_FIGS_DIR, load_external_datasets=True, aoi
 class RockGlacierInventory:
     """
     Describe a Rock Glacier Inventory dataset.
+
     It can be instantiated from either:
     - the Primary Markers layer and the Outlines layer from ROGI_2 (raw mode)
     - the Boosted layer from ROGI_2 + alti metrics (advanced mode)
@@ -133,7 +100,7 @@ class RockGlacierInventory:
     boosted : bool, whether the boosted layer is available or not
 
     Methods:
-    load_external_datasets_from_DATAMAP_on_thib_pc : load external datasets from a DATAMAP json file
+    load_external_datasets_from_datamap : load external datasets from a datamap json file
     get_median_values_in_geoim : compute the median value of a raster within each polygon of the main layer
     pre_process_main_layer : pre-process the main layer with some quick & dirty patches
     is_boosted : check if the boosted layer is available
@@ -153,7 +120,7 @@ class RockGlacierInventory:
     our_layer : gpd.GeoDataFrame, the Outlines Restricted layer from ROGI_2
     b_layer : gpd.GeoDataFrame, the Boosted layer from ROGI_2 + alti metrics
 
-    DATAMAP : json file with all the paths
+    datamap : json file with all the paths
     """
     
     def __init__(self,
@@ -211,7 +178,7 @@ class RockGlacierInventory:
         self.aoi_name = aoi_name
         if out_figs_dir is None:
             self.out_figs_version_note = out_figs_version_note
-            self.out_figs_dir = f"{TEMP_FIGS_DIR}/{self.get_complete_name()}"
+            self.out_figs_dir = f"{temp_figs_dir}/{self.get_complete_name()}"
         else:
             self.out_figs_dir = out_figs_dir
 
@@ -272,13 +239,13 @@ class RockGlacierInventory:
         """
         return self.basic_map_fig is not None and self.basic_map_ax is not None
 
-    def load_external_datasets_from_DATAMAP_on_thib_pc(self):
+    def load_external_datasets_from_datamap(self):
         """
         Necessary to create nice map backgrounds. 
-        Load DEMS, glaciers, lakes... from a json file called DATAMAP. Specific for TD. 
+        Load DEMS, glaciers, lakes... from a json file called datamap. Specific for TD. 
 
         Keywords:
-        DATAMAP : dict, dictionnary with all the paths to the datasets
+        datamap : dict, dictionnary with all the paths to the datasets
 
         Returns:
         None, but set the following attributes:
@@ -288,7 +255,7 @@ class RockGlacierInventory:
         dem : raster_tools object, the DEM for the area of interest
         dem_reclass : raster_tools object, the reclassified DEM for the area of interest
         hillshade : raster_tools object, the hillshade for the area of interest
-        Note: this method is specific to the DATAMAP file available on Thib's PC
+        Note: this method is specific to the datamap file available on Thib's PC
         """
 
         # TODO: make it more generic
@@ -296,22 +263,22 @@ class RockGlacierInventory:
         # Also, the arguments given here such as dem_res, hillshade_azimut, etc. are then specific to the files that are available on disk
 
         # DEM
-        self.alti_3d_path = DATAMAP['sa3d_dir']
+        self.alti_3d_path = datamap['sa3d_dir']
         self.derived_sa3d = Path(self.alti_3d_path, 'derived_products')
-        self.dem = rt.Open(Path(DATAMAP['alti_3D_20']), load_pixels=True, geoExtent=self.aoi_geom, nRes=self.aoi_rasters_res)
+        self.dem = rt.Open(Path(datamap['alti_3D_20']), load_pixels=True, geoExtent=self.aoi_geom, nRes=self.aoi_rasters_res)
 
         # Reclassify the DEM each 500m
         self.dem_reclass = aida.get_manual_clusters(self.dem, np.arange(0, 4500, self.aoi_dem_reclass_step))
 
         # Hillshade
-        self.hillshade = rt.Open(Path(DATAMAP['hillshade_alti3D_20']), load_pixels=True,  geoExtent=self.aoi_geom, nRes=self.aoi_rasters_res)
+        self.hillshade = rt.Open(Path(datamap['hillshade_alti3D_20']), load_pixels=True,  geoExtent=self.aoi_geom, nRes=self.aoi_rasters_res)
 
         # Glaciers
-        sgi16 = gpd.read_file(DATAMAP['glaciers_inv'], layer='sgi_2016_glaciers')
-        sgi1850 = gpd.read_file(DATAMAP['glaciers_inv'], layer='sgi_1850_glaciers')
+        sgi16 = gpd.read_file(datamap['glaciers_inv'], layer='sgi_2016_glaciers')
+        sgi1850 = gpd.read_file(datamap['glaciers_inv'], layer='sgi_1850_glaciers')
 
         # Places and waterways from OSM
-        osm_path = DATAMAP['osm_dir']
+        osm_path = datamap['osm_dir']
         places = gpd.read_file(Path(osm_path, 'gis_osm_places_free_1.shp')).to_crs(epsg=2056)
         lakes = gpd.read_file(Path(osm_path, 'gis_osm_water_a_free_1.shp')).to_crs(epsg=2056)
         lakes = lakes[lakes.fclass != 'glacier']
@@ -377,7 +344,7 @@ class RockGlacierInventory:
 
         # Load external datasets
         if load_external_datasets:
-            self.load_external_datasets_from_DATAMAP_on_thib_pc()
+            self.load_external_datasets_from_datamap()
         
         else:
             self.hillshade = None
@@ -798,8 +765,8 @@ class RockGlacierInventory:
 
         # Customize chart
         ax.grid(visible=True, axis='y', linewidth=0.5, color='grey', linestyle='dashed')
-        ax.set_ylabel(get_human_labels(y))
-        ax.set_xlabel(get_human_labels(hue))
+        ax.set_ylabel(get_nc(y))
+        ax.set_xlabel(get_nc(hue))
 
         # Title
         ax.set_title(f'{y} vs {hue}', fontsize=10)
@@ -858,9 +825,9 @@ class RockGlacierInventory:
             )
             all_traces.append(box.data)
             all_layouts.append({
-                'xaxis': {'title': get_human_labels(h)},
-                'yaxis': {'title': get_human_labels(y)},
-                'title': f"{get_human_labels(y)} vs {get_human_labels(h)}"
+                'xaxis': {'title': get_nc(h)},
+                'yaxis': {'title': get_nc(y)},
+                'title': f"{get_nc(y)} vs {get_nc(h)}"
             })
 
         # Flatten all traces into a single list
@@ -876,9 +843,9 @@ class RockGlacierInventory:
         # Create figure with all traces
         fig = go.Figure(data=traces)
         fig.update_layout(
-            yaxis_title=get_human_labels(y),
-            xaxis_title=get_human_labels(hue_options[0]),
-            title=f"{get_human_labels(y)} vs {get_human_labels(hue_options[0])}",
+            yaxis_title=get_nc(y),
+            xaxis_title=get_nc(hue_options[0]),
+            title=f"{get_nc(y)} vs {get_nc(hue_options[0])}",
             boxmode="group",
             template="plotly_white"
         )
@@ -1059,8 +1026,8 @@ class RockGlacierInventory:
         else:
             ax, _ =aida.explore_linear_relation(data=sub, x=y1, y=y2, s=s, hue=hue, palette_dict=self.gc[f"{hue}_colors"], hue_order=self.gc[f"{hue}_order"], reg_line_width=reg_line_width, ax=ax, show_score=show_score, show_legend=show_legend, **kwargs)
 
-        ax.set_xlabel(get_human_labels(y1))
-        ax.set_ylabel(get_human_labels(y2))
+        ax.set_xlabel(get_nc(y1))
+        ax.set_ylabel(get_nc(y2))
         ax.set_title(f'{y1} vs {y2}' + (f' colored by {hue}' if hue is not None else ''))
         
         return ax
@@ -1169,7 +1136,7 @@ class RockGlacierInventory:
 
         sns.countplot(data=sub, x=x1, palette=self.gc.get(f"{x1}_palette", None), order=self.gc.get(f"{x1}_order", None), ax=ax)
         ax.set_title(f"Distribution of rock glaciers from {x1} | {self.aoi_name}")
-        ax.set_xlabel(get_human_labels(x1))
+        ax.set_xlabel(get_nc(x1))
         ax.set_ylabel("count")
         ax.tick_params(axis='x', rotation=45)
 
@@ -1195,7 +1162,7 @@ class RockGlacierInventory:
 
         sns.barplot(data=surface_areas, x=x1, y='surface_area', palette=self.gc.get(f"{x1}_palette", None), order=self.gc.get(f"{x1}_order", None), ax=ax)
         ax.set_title(f"Surface area of rock glaciers from {x1} | {self.aoi_name}")
-        ax.set_xlabel(get_human_labels(x1))
+        ax.set_xlabel(get_nc(x1))
         ax.set_ylabel("Surface area (ha)")
         ax.tick_params(axis='x', rotation=45)
 
@@ -1251,14 +1218,14 @@ class RockGlacierInventory:
         if hue is not None:
             sub = sub.dropna(subset=[x, hue])
             sns.histplot(data=sub, x=x, hue=hue, hue_order=self.gc.get(f"{hue}_order", None), palette=self.gc.get(f"{hue}_palette", None), ax=ax, **kwargs)
-            ax.set_title(f"Distribution of {get_human_labels(x)} colored by {get_human_labels(hue)} | {self.aoi_name}")
+            ax.set_title(f"Distribution of {get_nc(x)} colored by {get_nc(hue)} | {self.aoi_name}")
 
         else:
             sub = sub.dropna(subset=[x])
             sns.histplot(data=sub, x=x, ax=ax, color=color, **kwargs)
-            ax.set_title(f"Distribution of {get_human_labels(x)} | {self.aoi_name}")
+            ax.set_title(f"Distribution of {get_nc(x)} | {self.aoi_name}")
     
-        ax.set_xlabel(get_human_labels(x))
+        ax.set_xlabel(get_nc(x))
         ax.set_ylabel("count")
 
         return ax
@@ -1474,9 +1441,9 @@ class RockGlacierInventory:
             linewidth=linewidth,
         )
 
-        ax.set_xlabel(get_human_labels(y1))
-        ax.set_ylabel(get_human_labels(y2))
-        ax.set_title(f'Density contours of {get_human_labels(y2)} vs {get_human_labels(y1)}')
+        ax.set_xlabel(get_nc(y1))
+        ax.set_ylabel(get_nc(y2))
+        ax.set_title(f'Density contours of {get_nc(y2)} vs {get_nc(y1)}')
 
         return ax
 
@@ -1619,7 +1586,7 @@ class RockGlacierInventory:
 
         return gl_pag_r
 
-    def sf(self, title, dpi=200, sub_folder_name=None):
+    def sf(self, title, dpi=200, sub_folder_name=None, bbox_inches='tight', pad_inches=0.2):
         """
         Save the last edited figure in the output figure directory
         """
@@ -1628,7 +1595,7 @@ class RockGlacierInventory:
         if sub_folder_name is not None:
             figpath = Path(figpath, sub_folder_name)
 
-        plt.savefig(Path(figpath, f"{title}_{self.aoi_name}.png"), dpi=dpi)
+        plt.savefig(Path(figpath, f"{title}_{self.aoi_name}.png"), dpi=dpi, bbox_inches=bbox_inches, pad_inches=pad_inches)
     
     # def copy(self):
     #     """
@@ -1672,9 +1639,9 @@ class RockGlacierInventory:
         
     #     return foo
 
-def get_human_labels(col):
+def get_nc(col):
     try:
-        h_label = human_keys[col]
+        h_label = nc[col]
     except KeyError:
         h_label = col
     return h_label

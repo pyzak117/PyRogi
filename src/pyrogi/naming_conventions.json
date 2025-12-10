@@ -1,0 +1,21 @@
+{
+    "rgu_activity_class_wu":"Rock Glacier Activity Class",
+    "rgu_activity_class":"Rock Glacier Activity Class",
+    "upslope_con":"Rock Glacier Upslope Connection Type",
+    "alti_oue_min":"Rock Glacier Front Elevation (m a.s.l.)",
+    "alti_oue_max":"Rock Glacier Roots Elevation (m a.s.l.)",
+    "alti_oue_mean":"Rock Glacier Mean Elevation (m a.s.l.)",
+    "alti_oue_med": "Rock Glacier Median Elevation (m a.s.l.)",
+    "slope_our_med":"Rock Glacier Surface Median Steepness (°)",
+    "rgu_kin_att": "Rock Glacier Kinematic Attribute (annual semi order of magnitude)",
+    "cardi_pt":"Rock Glacier Main Orientation",
+    "surf_oue_ha":"Rock Glacier Extended surface (hectares)",
+    "surf_our_ha":"Rock Glacier Restricted surface (hectares)",
+    "len_min_our":"Rock Glacier Restricted Width",
+    "len_max_our":"Rock Glacier Restricted Length",
+    "rgu_dird":"Mean Daily Direct Insolation in Summer (kJ/m²/day)",
+    "rgu_rnorm":"Climatic Norm (1991-2020) | Mean Annual Precipitation (mm/year) (RNORMY9120)",
+    "rgu_tnorm":"Climatic Norm (1991-2020) | Mean Annual Air Temperature (°C) (TNORMY9120))",
+    "rgu_tnormy9120_hd":"Climatic Norm (1991-2020) | Mean Annual Air Temperature (°C) (TNORMY9120))",
+    "status":"Rock Glacier Activity Status"
+}
